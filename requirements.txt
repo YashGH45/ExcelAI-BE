@@ -1,0 +1,12 @@
+python-dotenv
+fastapi
+uvicorn
+python-multipart
+groq
+openai
+ollama
+chromadb
+pandas
+openpyxl
+duckdb
+psutil
