@@ -31,6 +31,7 @@ _SUMMARY_KEYWORDS = {
 }
 
 MAX_RESULT_ROWS = 20
+MAX_SQL_RETRIES = 5
 
 
 def _is_summary_query(query: str) -> bool:
@@ -96,21 +97,35 @@ def _text_to_sql_search(query: str) -> list[str]:
         "using double quotes around all column names"
         "Return only the raw SQL — no explanation, no markdown, no backticks."
     )
-    raw_sql = chat(sql_prompt)
-    sql = _strip_fences(raw_sql)
+    sql = _strip_fences(chat(sql_prompt))
 
-    # execute, on failure feed the error back for one retry
-    try:
-        result_df = _duck_conn.execute(sql).df()
-    except Exception as first_err:
-        retry_prompt = (
-            f"The SQL query failed with: {first_err}\n\n"
-            f"Original question: {query}\n"
-            f"Schema:\n{schema_str}\n\n"
-            "Return only the corrected SQL — no markdown, no backticks."
-        )
-        sql = _strip_fences(chat(retry_prompt))
-        result_df = _duck_conn.execute(sql).df()
+    # Agentic self-correction loop — retry up to MAX_SQL_RETRIES times
+    result_df = None
+    last_error = None
+    for attempt in range(1, MAX_SQL_RETRIES + 1):
+        try:
+            result_df = _duck_conn.execute(sql).df()
+            print(f"[sql-agent] query succeeded on attempt {attempt}")
+            break
+        except Exception as err:
+            last_error = err
+            print(f"[sql-agent] attempt {attempt}/{MAX_SQL_RETRIES} failed: {err}")
+            if attempt < MAX_SQL_RETRIES:
+                heal_prompt = (
+                    f"The following DuckDB SQL query:\n{sql}\n\n"
+                    f"Failed with this error:\n{err}\n\n"
+                    f"Original question: {query}\n"
+                    f"Table schema:\n{schema_str}\n\n"
+                    "Diagnose the error, fix the query, and return only the corrected SQL — "
+                    "no explanation, no markdown, no backticks."
+                )
+                sql = _strip_fences(chat(heal_prompt))
+
+    if result_df is None:
+        return [
+            f"I was unable to answer your question after {MAX_SQL_RETRIES} attempts. "
+            f"Last error: {last_error}"
+        ]
 
     # summarise the result in natural language using the LLM
     total_rows = len(result_df)
