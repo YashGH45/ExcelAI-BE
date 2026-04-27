@@ -16,9 +16,12 @@ groq_chat_model = os.environ["GROQ_CHAT_MODEL"]
 groq_mini_chat_model = os.environ["GROQ_MINI_CHAT_MODEL"]
 gemma_model = os.environ["GEMMA_MODEL"]
 
+# ── ChromaDB — always-on for conversation memory ─────────────────────────────
+_chroma_client = chromadb.PersistentClient(path="./vector_db")
+_conv_collection = _chroma_client.get_or_create_collection(name="conversation_memory")
+
 if USE_VECTOR_SEARCH:
-    chroma_client = chromadb.PersistentClient(path="./vector_db")
-    collection = chroma_client.get_or_create_collection(name="my_collection")
+    collection = _chroma_client.get_or_create_collection(name="my_collection")
 
 _duck_conn: duckdb.DuckDBPyConnection | None = None
 _dataset_summary: str | None = None
@@ -77,6 +80,49 @@ def _strip_fences(text: str) -> str:
     return cleaned.strip()
 
 
+# ── Conversation memory helpers ──────────────────────────────────────────────
+
+def _embed_for_memory(text: str) -> list[float] | None:
+    """Embed text via Ollama. Returns None gracefully if Ollama is not running."""
+    try:
+        response = ollama.embeddings(model="nomic-embed-text", prompt=text)
+        return response["embedding"]
+    except Exception as e:
+        print(f"[memory] Ollama unavailable, skipping embedding: {e}")
+        return None
+
+
+def _store_conversation(query: str, answer: str) -> None:
+    """Embed the query and persist the Q&A pair to ChromaDB."""
+    vector = _embed_for_memory(query)
+    if vector is None:
+        return
+    doc_id = f"conv_{abs(hash(query))}"
+    _conv_collection.upsert(
+        ids=[doc_id],
+        embeddings=[vector],
+        documents=[f"Q: {query}\nA: {answer}"],
+    )
+    print(f"[memory] stored conversation for: {query[:60]}")
+
+
+def _retrieve_similar_conversations(query: str, top_k: int = 3) -> str:
+    """Return a formatted string of the top-K most relevant past Q&A pairs."""
+    vector = _embed_for_memory(query)
+    if vector is None:
+        return ""
+    try:
+        results = _conv_collection.query(query_embeddings=[vector], n_results=top_k)
+        docs = results["documents"][0] if results["documents"] else []
+    except Exception as e:
+        print(f"[memory] retrieval failed: {e}")
+        return ""
+    if not docs:
+        return ""
+    print(f"[memory] retrieved {len(docs)} relevant past interaction(s)")
+    return "\n\n".join(docs)
+
+
 def _text_to_sql_search(query: str) -> list[str]:
     global _duck_conn
 
@@ -91,10 +137,18 @@ def _text_to_sql_search(query: str) -> list[str]:
     schema_rows = _duck_conn.execute("DESCRIBE SELECT * FROM data").fetchall()
     schema_str = "\n".join(f"  {col}" for col, *_ in schema_rows)
 
+    # Step 2 – retrieve semantically similar past Q&A pairs as memory context
+    past_context = _retrieve_similar_conversations(query)
+    memory_block = (
+        f"Relevant past interactions (use these as context, do not repeat them):\n{past_context}\n\n"
+        if past_context else ""
+    )
+
     sql_prompt = (
         f"You have a DuckDB table called 'data' with this schema:\n{schema_str}\n\n"
+        f"{memory_block}"
         f"Write a DuckDB SQL query to answer: {query}\n\n"
-        "using double quotes around all column names"
+        "Use double quotes around all column names. "
         "Return only the raw SQL — no explanation, no markdown, no backticks."
     )
     sql = _strip_fences(chat(sql_prompt))
@@ -144,6 +198,9 @@ def _text_to_sql_search(query: str) -> list[str]:
     )
     summary = chat(summary_prompt)
 
+    # Store this Q&A pair in vector memory for future context retrieval
+    _store_conversation(query, summary)
+
     return [summary]
 
 
@@ -181,8 +238,8 @@ def delete() -> None:
     global _duck_conn
     if USE_VECTOR_SEARCH:   # Preserved for future use
         global collection
-        chroma_client.delete_collection("my_collection")
-        collection = chroma_client.get_or_create_collection("my_collection")
+        _chroma_client.delete_collection("my_collection")
+        collection = _chroma_client.get_or_create_collection("my_collection")
     else:
         # Reset the in-memory DuckDB so stale data from a previous upload is gone
         _duck_conn = None
