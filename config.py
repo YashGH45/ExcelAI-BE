@@ -27,3 +27,4 @@ Rules:
 - If a column has only a few possible values (like status, region), flag it as categorical
 - Return only valid JSON, no preamble, no markdown, no backticks
 """
+

@@ -10,3 +10,4 @@ pandas
 openpyxl
 duckdb
 psutil
+requests

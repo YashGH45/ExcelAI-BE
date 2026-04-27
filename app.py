@@ -2,7 +2,7 @@ import shutil
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from ai_client import search, delete, store_one, load_into_duckdb
+from ai_client import search, delete, store_one, load_into_duckdb, set_dataset_summary
 from config import UPLOAD_DIR
 from dto_models import ChatRequest, ChatResponse, UploadResponse
 from services import load_dataframe, convert_rows_to_sentences, generate_schema_and_template
@@ -16,6 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+USE_VECTOR_SEARCH = False
 
 DEV_MODE = True
 DEV_FILE = "Hotels_data.xlsx"
@@ -45,15 +46,18 @@ async def upload_file(file: UploadFile = File(...)):
 
         df = load_dataframe(str(file_path))
 
-        # Register dataframe in DuckDB for the text-to-SQL path
-        load_into_duckdb(df)
+        if USE_VECTOR_SEARCH:
+            result = generate_schema_and_template(df)
+            summary = result["summary"]
+            template = result["template"]
 
-        result = generate_schema_and_template(df)
-        summary = result["summary"]
-        template = result["template"]
+            set_dataset_summary(summary)
+            store_one(summary, 'file_summary')
+            convert_rows_to_sentences(df, template)
 
-        store_one(summary, 'file_summary')
-        convert_rows_to_sentences(df, template)
+        else:
+            # Register dataframe in DuckDB for the text-to-SQL path
+            load_into_duckdb(df)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to process file: {e}")
 

@@ -5,7 +5,10 @@ from ai_client import store, chat
 
 
 def load_dataframe(filepath: str) -> pd.DataFrame:
-    df = pd.read_excel(filepath)
+    if filepath.endswith(".csv"):
+        df = pd.read_csv(filepath)
+    else:
+        df = pd.read_excel(filepath)
     return df.dropna(how="all")
 
 
