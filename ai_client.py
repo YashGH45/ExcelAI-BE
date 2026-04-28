@@ -29,10 +29,10 @@ _duck_conn: duckdb.DuckDBPyConnection | None = None
 _dataset_summary: str | None = None
 
 # ── PDF PageIndex state (VectorLess BM25 retrieval) ──────────────────────────
-_current_mode: str = "excel"                  # "excel" | "pdf"
-_pdf_pages: list[dict] | None = None          # [{"page_num": N, "text": "..."}]
+_current_mode: str = "excel"
+_pdf_pages: list[dict] | None = None
 _pdf_bm25: BM25Okapi | None = None
-_recent_pdf_turns: deque = deque(maxlen=5)    # (query, page_refs, answer)
+_recent_pdf_turns: deque = deque(maxlen=5)
 
 # ── Sequential turn buffer — primary context for follow-up resolution ────────
 # Stores (query, sql, answer) tuples in order; capped at 5 most recent turns.
@@ -67,7 +67,6 @@ def set_mode(mode: str) -> None:
 
 
 def load_pdf_index(pages: list[dict]) -> None:
-    """Build a BM25 index over PDF pages. No embeddings — pure lexical ranking."""
     global _pdf_pages, _pdf_bm25
     _pdf_pages = pages
     tokenized = [page["text"].lower().split() for page in pages]
@@ -90,7 +89,6 @@ def _format_recent_pdf_turns() -> str:
 
 
 def _pdf_search(query: str, top_k: int = 3) -> list[str]:
-    """Retrieve top-K pages via BM25 and ask the LLM to answer from them."""
     if _pdf_bm25 is None or not _pdf_pages:
         return ["No PDF loaded. Please upload a PDF file first."]
 
@@ -171,7 +169,6 @@ def _strip_fences(text: str) -> str:
 # ── Conversation memory helpers ──────────────────────────────────────────────
 
 def _embed_for_memory(text: str) -> list[float] | None:
-    """Embed text via Ollama. Returns None gracefully if Ollama is not running."""
     try:
         response = ollama.embeddings(model="nomic-embed-text", prompt=text)
         return response["embedding"]
@@ -181,7 +178,6 @@ def _embed_for_memory(text: str) -> list[float] | None:
 
 
 def _store_conversation(query: str, sql: str, answer: str) -> None:
-    """Push turn into the sequential buffer and persist to ChromaDB."""
     # Sequential buffer — always reliable for immediate follow-ups
     _recent_turns.append((query, sql, answer))
 
@@ -201,7 +197,6 @@ def _store_conversation(query: str, sql: str, answer: str) -> None:
 
 
 def _format_recent_turns() -> str:
-    """Return the sequential turn buffer formatted for the SQL prompt."""
     if not _recent_turns:
         return ""
     lines = []
@@ -212,7 +207,6 @@ def _format_recent_turns() -> str:
 
 
 def _retrieve_similar_conversations(query: str, top_k: int = 3) -> str:
-    """Return a formatted string of the top-K most relevant past Q+SQL+A triplets."""
     vector = _embed_for_memory(query)
     if vector is None:
         return ""

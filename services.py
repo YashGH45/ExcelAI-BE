@@ -29,7 +29,6 @@ def extract_headers_row(df: pd.DataFrame) -> str:
 
 
 def load_pdf_pages(filepath: str) -> list[dict]:
-    """Extract text from a PDF page by page. Returns [{page_num, text}, ...]."""
     pages = []
     with pdfplumber.open(filepath) as pdf:
         for i, page in enumerate(pdf.pages):
