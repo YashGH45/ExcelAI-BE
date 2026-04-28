@@ -2,7 +2,7 @@ import shutil
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from ai_client import search, delete, store_one, load_into_duckdb, set_dataset_summary, load_pdf_index, set_mode
+from ai_client import search, delete, store_one, load_into_duckdb, set_dataset_summary, load_pdf_index, set_mode, SearchResult
 from config import UPLOAD_DIR
 from dto_models import ChatRequest, ChatResponse, UploadResponse
 from services import load_dataframe, convert_rows_to_sentences, generate_schema_and_template, load_pdf_pages
@@ -29,9 +29,8 @@ async def health():
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(body: ChatRequest):
-    results = search(body.message)
-    reply = "\n\n".join(results)
-    return ChatResponse(reply=reply)
+    result: SearchResult = search(body.message)
+    return ChatResponse(reply=result.reply, vega_spec=result.vega_spec, insights=result.insights)
 
 
 @app.post("/api/upload", response_model=UploadResponse)

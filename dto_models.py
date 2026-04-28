@@ -8,6 +8,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    vega_spec: dict | None = None
+    insights: list[str] = []
 
 
 class UploadResponse(BaseModel):

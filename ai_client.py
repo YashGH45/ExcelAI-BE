@@ -1,6 +1,8 @@
 import os
+import json
 import duckdb
 import pandas as pd
+from dataclasses import dataclass, field
 from collections import deque
 from dotenv import load_dotenv
 from groq import Groq
@@ -49,6 +51,14 @@ MAX_RESULT_ROWS = 20
 MAX_SQL_RETRIES = 5
 
 
+@dataclass
+class SearchResult:
+    """Unified return type for all search paths (SQL + PDF)."""
+    reply: str
+    vega_spec: dict | None = field(default=None)
+    insights: list = field(default_factory=list)
+
+
 def _is_summary_query(query: str) -> bool:
     q = query.lower().strip()
     return any(kw in q for kw in _SUMMARY_KEYWORDS)
@@ -88,9 +98,9 @@ def _format_recent_pdf_turns() -> str:
     return "\n\n".join(lines)
 
 
-def _pdf_search(query: str, top_k: int = 3) -> list[str]:
+def _pdf_search(query: str, top_k: int = 3) -> SearchResult:
     if _pdf_bm25 is None or not _pdf_pages:
-        return ["No PDF loaded. Please upload a PDF file first."]
+        return SearchResult(reply="No PDF loaded. Please upload a PDF file first.")
 
     # BM25 scoring — no vectors, pure term-frequency / inverse-document-frequency
     tokens = query.lower().split()
@@ -106,7 +116,7 @@ def _pdf_search(query: str, top_k: int = 3) -> list[str]:
             matched_page_nums.append(str(page["page_num"]))
 
     if not context_parts:
-        return ["I couldn't find any relevant content in the PDF for your question."]
+        return SearchResult(reply="I couldn't find any relevant content in the PDF for your question.")
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -130,7 +140,7 @@ def _pdf_search(query: str, top_k: int = 3) -> list[str]:
     _store_pdf_conversation(query, page_refs, answer)
     print(f"[pdf-index] answered from pages: {page_refs}")
 
-    return [answer]
+    return SearchResult(reply=answer)
 
 
 # ── Shared LLM helper ────────────────────────────────────────────────────────
@@ -164,6 +174,49 @@ def _strip_fences(text: str) -> str:
         cleaned = cleaned.split("\n", 1)[-1]   # drop opening fence line
         cleaned = cleaned.rsplit("```", 1)[0]   # drop closing fence
     return cleaned.strip()
+
+
+def _generate_chart_and_insights(df: pd.DataFrame, query: str) -> tuple[dict | None, list[str]]:
+    """Single LLM call that returns both the Vega-Lite v5 spec and analytical insights.
+
+    Returns (vega_spec_dict_or_None, insights_list).
+    """
+    if df is None or df.empty:
+        return None, []
+
+    schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
+    data_json = df.to_json(orient="records", date_format="iso")
+
+    from config import CHART_AND_INSIGHTS_PROMPT
+    prompt = CHART_AND_INSIGHTS_PROMPT.format(
+        query=query,
+        schema=schema_str,
+        data_json=data_json,
+    )
+
+    raw = _strip_fences(chat(prompt)).strip()
+
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return None, []
+
+        spec = payload.get("vega_spec")
+        if not isinstance(spec, dict):
+            spec = None
+
+        insights = payload.get("insights", [])
+        if not isinstance(insights, list):
+            insights = []
+        insights = [str(i) for i in insights]
+
+        if spec:
+            print(f"[chart] Vega-Lite spec generated  |  {len(insights)} insight(s)")
+        return spec, insights
+
+    except json.JSONDecodeError as exc:
+        print(f"[chart] invalid JSON from LLM — skipping chart+insights: {exc}")
+        return None, []
 
 
 # ── Conversation memory helpers ──────────────────────────────────────────────
@@ -229,15 +282,15 @@ def _retrieve_similar_conversations(query: str, top_k: int = 3) -> str:
     return "\n\n".join(docs)
 
 
-def _text_to_sql_search(query: str) -> list[str]:
+def _text_to_sql_search(query: str) -> SearchResult:
     global _duck_conn
 
     if _duck_conn is None:
-        return ["No data loaded. Please upload a file first."]
+        return SearchResult(reply="No data loaded. Please upload a file first.")
 
     # Short-circuit: broad summary queries use the pre-generated dataset summary
     if _is_summary_query(query) and _dataset_summary:
-        return [_dataset_summary]
+        return SearchResult(reply=_dataset_summary)
 
     # Step 1 – extract schema from DuckDB via DESCRIBE
     schema_rows = _duck_conn.execute("DESCRIBE SELECT * FROM data").fetchall()
@@ -304,16 +357,20 @@ def _text_to_sql_search(query: str) -> list[str]:
                 sql = _strip_fences(chat(heal_prompt))
 
     if result_df is None:
-        return [
-            f"I was unable to answer your question after {MAX_SQL_RETRIES} attempts. "
-            f"Last error: {last_error}"
-        ]
+        return SearchResult(
+            reply=(
+                f"I was unable to answer your question after {MAX_SQL_RETRIES} attempts. "
+                f"Last error: {last_error}"
+            )
+        )
 
-    # summarise the result in natural language using the LLM
+    # Truncate before both summary and chart generation
     total_rows = len(result_df)
     if total_rows > MAX_RESULT_ROWS:
         result_df = result_df.head(MAX_RESULT_ROWS)
         print(f"[token guard] result truncated to {MAX_RESULT_ROWS} of {total_rows} rows")
+
+    # ── Natural-language summary ─────────────────────────────────────────────
     result_csv = result_df.to_csv(index=False)
     summary_prompt = (
         f"The following SQL was executed:\n{sql}\n\n"
@@ -327,10 +384,13 @@ def _text_to_sql_search(query: str) -> list[str]:
     )
     summary = chat(summary_prompt)
 
+    # ── Vega-Lite spec + analytical insights (single LLM call) ──────────────
+    vega_spec, insights = _generate_chart_and_insights(result_df, query)
+
     # Store Q+SQL+A triplet in vector memory for future context retrieval
     _store_conversation(query, sql, summary)
 
-    return [summary]
+    return SearchResult(reply=summary, vega_spec=vega_spec, insights=insights)
 
 
 # ── Vector / embedding functions (preserved for future use) ──────────────────
@@ -353,7 +413,7 @@ def store_one(text: str, doc_id: str) -> None:
         store([text], [doc_id])
 
 
-def search(query: str, top_k: int = 3) -> list[str]:
+def search(query: str, top_k: int = 3) -> SearchResult:
     # PDF mode: VectorLess BM25 PageIndex retrieval
     if _current_mode == "pdf":
         return _pdf_search(query, top_k)
@@ -361,7 +421,7 @@ def search(query: str, top_k: int = 3) -> list[str]:
     if USE_VECTOR_SEARCH:   # Preserved for future use
         query_vector = embed(query)
         results = collection.query(query_embeddings=[query_vector], n_results=top_k)
-        return results["documents"][0]
+        return SearchResult(reply="\n\n".join(results["documents"][0]))
 
     # Text-to-SQL path (Excel / CSV)
     return _text_to_sql_search(query)
