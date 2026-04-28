@@ -1,6 +1,7 @@
 import os
 import duckdb
 import pandas as pd
+from collections import deque
 from dotenv import load_dotenv
 from groq import Groq
 from openai.types.chat import ChatCompletionUserMessageParam, ChatCompletionSystemMessageParam
@@ -25,6 +26,10 @@ if USE_VECTOR_SEARCH:
 
 _duck_conn: duckdb.DuckDBPyConnection | None = None
 _dataset_summary: str | None = None
+
+# ── Sequential turn buffer — primary context for follow-up resolution ────────
+# Stores (query, sql, answer) tuples in order; capped at 5 most recent turns.
+_recent_turns: deque = deque(maxlen=5)
 
 _SUMMARY_KEYWORDS = {
     "summary", "summarize", "summarise", "summarization",
@@ -92,27 +97,51 @@ def _embed_for_memory(text: str) -> list[float] | None:
         return None
 
 
-def _store_conversation(query: str, answer: str) -> None:
-    """Embed the query and persist the Q&A pair to ChromaDB."""
+def _store_conversation(query: str, sql: str, answer: str) -> None:
+    """Push turn into the sequential buffer and persist to ChromaDB."""
+    # Sequential buffer — always reliable for immediate follow-ups
+    _recent_turns.append((query, sql, answer))
+
+    # Vector store — used as a secondary fallback for non-adjacent references
     vector = _embed_for_memory(query)
     if vector is None:
         return
-    doc_id = f"conv_{abs(hash(query))}"
+    # Include a timestamp suffix so repeated identical queries don't overwrite
+    import time
+    doc_id = f"conv_{abs(hash(query))}_{int(time.time())}"
     _conv_collection.upsert(
         ids=[doc_id],
         embeddings=[vector],
-        documents=[f"Q: {query}\nA: {answer}"],
+        documents=[f"Q: {query}\nSQL: {sql}\nA: {answer}"],
     )
     print(f"[memory] stored conversation for: {query[:60]}")
 
 
+def _format_recent_turns() -> str:
+    """Return the sequential turn buffer formatted for the SQL prompt."""
+    if not _recent_turns:
+        return ""
+    lines = []
+    for i, (q, s, a) in enumerate(_recent_turns):
+        label = "MOST RECENT" if i == len(_recent_turns) - 1 else f"Turn {i + 1}"
+        lines.append(f"[{label}]\nQ: {q}\nSQL: {s}\nA: {a}")
+    return "\n\n".join(lines)
+
+
 def _retrieve_similar_conversations(query: str, top_k: int = 3) -> str:
-    """Return a formatted string of the top-K most relevant past Q&A pairs."""
+    """Return a formatted string of the top-K most relevant past Q+SQL+A triplets."""
     vector = _embed_for_memory(query)
     if vector is None:
         return ""
     try:
-        results = _conv_collection.query(query_embeddings=[vector], n_results=top_k)
+        # Cap n_results to actual collection size to avoid ChromaDB crash
+        count = _conv_collection.count()
+        if count == 0:
+            return ""
+        results = _conv_collection.query(
+            query_embeddings=[vector],
+            n_results=min(top_k, count),
+        )
         docs = results["documents"][0] if results["documents"] else []
     except Exception as e:
         print(f"[memory] retrieval failed: {e}")
@@ -137,18 +166,40 @@ def _text_to_sql_search(query: str) -> list[str]:
     schema_rows = _duck_conn.execute("DESCRIBE SELECT * FROM data").fetchall()
     schema_str = "\n".join(f"  {col}" for col, *_ in schema_rows)
 
-    # Step 2 – retrieve semantically similar past Q&A pairs as memory context
+    # Step 2 – build context block: sequential buffer first, vector fallback second
+    recent_str = _format_recent_turns()
+    recent_block = (
+        f"Recent conversation history (oldest first; [MOST RECENT] is the direct predecessor):\n"
+        f"{recent_str}\n\n"
+        if recent_str else ""
+    )
+
     past_context = _retrieve_similar_conversations(query)
-    memory_block = (
-        f"Relevant past interactions (use these as context, do not repeat them):\n{past_context}\n\n"
+    vector_block = (
+        f"Additional semantically similar past interactions (lower priority than recent history above):\n{past_context}\n\n"
         if past_context else ""
+    )
+
+    memory_block = (
+        (recent_block + vector_block)
+        +
+        "CRITICAL RULE FOR FOLLOW-UPS — When the question uses pronouns like 'them', 'those', "
+        "'that room', 'those guests', etc., you MUST resolve them by wrapping the SQL from the "
+        "[MOST RECENT] turn above as a subquery or CTE. "
+        "NEVER hardcode room numbers, names, or any specific values copied from a text answer. "
+        "Always compose the answer using SQL subqueries so the scope is exactly correct.\n\n"
+        if recent_block or vector_block else ""
     )
 
     sql_prompt = (
         f"You have a DuckDB table called 'data' with this schema:\n{schema_str}\n\n"
         f"{memory_block}"
         f"Write a DuckDB SQL query to answer: {query}\n\n"
-        "Use double quotes around all column names. "
+        "Rules:\n"
+        "1. Use double quotes around all column names.\n"
+        "2. SELECT all columns needed to fully answer the question — if filtering by a column, also include it in the SELECT clause to ensure the result is self-explanatory and complete.\n"
+        "3. When a follow-up question refers to a subset from a previous interaction (using pronouns like 'those', 'that', 'them'), wrap the [MOST RECENT] SQL as a subquery and preserve its LIMIT and ORDER BY clauses exactly — do not expand the scope or add additional filtering.\n"
+        "4. When the question refers to a single entity (indicated by singular articles like 'that' + noun), the subquery identifying it must use LIMIT 1 to ensure only one result is returned.\n"
         "Return only the raw SQL — no explanation, no markdown, no backticks."
     )
     sql = _strip_fences(chat(sql_prompt))
@@ -188,18 +239,19 @@ def _text_to_sql_search(query: str) -> list[str]:
         print(f"[token guard] result truncated to {MAX_RESULT_ROWS} of {total_rows} rows")
     result_csv = result_df.to_csv(index=False)
     summary_prompt = (
-        f"Given this query result:\n{result_csv}\n\n"
-        f"Answer concisely in natural language: {query}"
-        """IMPORTANT RULES:
-            - Never summarize or truncate query results
-            - Never make decisions on behalf of the user about what is 'too much' data
-            - Always return the exact data from the query result
-            - If the user asks to list all, list all — no exceptions"""
+        f"The following SQL was executed:\n{sql}\n\n"
+        f"Query result:\n{result_csv}\n\n"
+        f"Answer concisely in natural language: {query}\n\n"
+        "IMPORTANT RULES:\n"
+        "- The SQL and its result are already correct — trust them completely.\n"
+        "- Never say you need more data — everything needed is in the result above.\n"
+        "- Never summarize or truncate — return all rows from the result.\n"
+        "- If the user asks to list all, list all — no exceptions."
     )
     summary = chat(summary_prompt)
 
-    # Store this Q&A pair in vector memory for future context retrieval
-    _store_conversation(query, summary)
+    # Store Q+SQL+A triplet in vector memory for future context retrieval
+    _store_conversation(query, sql, summary)
 
     return [summary]
 
@@ -236,6 +288,8 @@ def search(query: str, top_k: int = 3) -> list[str]:
 
 def delete() -> None:
     global _duck_conn
+    # Clear sequential turn buffer so prior conversation doesn't bleed into a new session
+    _recent_turns.clear()
     if USE_VECTOR_SEARCH:   # Preserved for future use
         global collection
         _chroma_client.delete_collection("my_collection")
