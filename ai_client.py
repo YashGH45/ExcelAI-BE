@@ -4,6 +4,7 @@ import duckdb
 import pandas as pd
 from dataclasses import dataclass, field
 from collections import deque
+from enum import Enum
 from dotenv import load_dotenv
 from groq import Groq
 from openai.types.chat import ChatCompletionUserMessageParam, ChatCompletionSystemMessageParam
@@ -49,6 +50,93 @@ _SUMMARY_KEYWORDS = {
 
 MAX_RESULT_ROWS = 20
 MAX_SQL_RETRIES = 5
+
+
+# ── Query intent classification ──────────────────────────────────────────────
+
+class QueryIntent(Enum):
+    ANSWER_ONLY = "answer_only"
+    ANSWER_WITH_CHART = "answer_with_chart"
+    ANSWER_WITH_INSIGHTS = "answer_with_insights"
+    ANSWER_WITH_CHART_AND_INSIGHTS = "answer_with_chart_and_insights"
+    WRITE = "write"
+
+
+# Phrases/words that clearly signal a write/mutate operation on the data
+_WRITE_PHRASES = (
+    "update the", "update this", "modify the", "modify this",
+    "change the value", "change this value", "set the value", "set this to",
+    "delete the row", "delete this row", "remove the row", "remove this row",
+    "insert a row", "add a row", "add row", "edit the", "edit this",
+    "overwrite", "replace the value", "write to the",
+)
+
+# Keywords that signal an explicit chart/visualization request
+_CHART_KEYWORDS = (
+    "plot", "graph", "chart", "visualize", "visualise", "visualization",
+    "visualisation", "draw", "histogram", "bar chart", "pie chart",
+    "line chart", "scatter plot", "show me a chart", "show a chart",
+)
+
+# Keywords that signal an explicit insights/analysis request
+_INSIGHTS_KEYWORDS = (
+    "insight", "insights", "analyze", "analyse", "analysis", "trend",
+    "trends", "pattern", "patterns", "notable", "interesting", "highlight",
+    "observation", "takeaway", "stands out", "key finding",
+)
+
+# Keywords that signal an aggregation query (naturally benefits from chart+insights)
+_AGGREGATION_KEYWORDS = (
+    "total", "average", "avg", "sum", "maximum", "minimum",
+    "distribution", "breakdown", "compare", "comparison", "ranking", "rank",
+    "how many", "how much", "percentage", "percent",
+    "by month", "by week", "by year", "by quarter", "by day",
+    "per month", "per year", "per day", "per quarter",
+    "over time", "year over year", "month over month",
+    "most popular", "least popular", "highest", "lowest", "most", "least",
+    "top 5", "top 10", "bottom 5", "bottom 10",
+)
+
+# " by " phrases that do NOT indicate grouping/aggregation
+_NON_AGGREGATION_BY_PHRASES = (
+    "sort by", "order by", "sorted by", "ordered by", "filter by", "filtered by",
+    "divided by", "caused by",
+)
+
+
+def classify_intent(query: str) -> QueryIntent:
+    """Classify query intent using keyword heuristics — no extra LLM call.
+
+    Returns one of five intents that controls which response elements get
+    generated (answer text, chart spec, insights, or a write-op placeholder).
+    """
+    q = query.lower().strip()
+
+    # 1. Write operations (highest priority) — placeholder for future feature
+    if any(phrase in q for phrase in _WRITE_PHRASES):
+        return QueryIntent.WRITE
+
+    # 2. Explicit chart / insights requests
+    has_chart = any(kw in q for kw in _CHART_KEYWORDS)
+    has_insights = any(kw in q for kw in _INSIGHTS_KEYWORDS)
+
+    if has_chart and has_insights:
+        return QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS
+    if has_chart:
+        return QueryIntent.ANSWER_WITH_CHART
+    if has_insights:
+        return QueryIntent.ANSWER_WITH_INSIGHTS
+
+    # 3. Aggregation signals — implies multi-row summary data that charts well
+    has_aggregation = any(kw in q for kw in _AGGREGATION_KEYWORDS) or (
+        " by " in q
+        and not any(phrase in q for phrase in _NON_AGGREGATION_BY_PHRASES)
+    )
+    if has_aggregation:
+        return QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS
+
+    # 4. Default: simple lookup — just return the answer
+    return QueryIntent.ANSWER_ONLY
 
 
 @dataclass
@@ -176,23 +264,32 @@ def _strip_fences(text: str) -> str:
     return cleaned.strip()
 
 
-def _generate_chart_and_insights(df: pd.DataFrame, query: str) -> tuple[dict | None, list[str]]:
-    """Single LLM call that returns both the Vega-Lite v5 spec and analytical insights.
+def _generate_chart_and_insights(
+    df: pd.DataFrame,
+    query: str,
+    want_chart: bool = True,
+    want_insights: bool = True,
+) -> tuple[dict | None, list[str]]:
+    """Single LLM call that returns a Vega-Lite v5 spec and/or analytical insights.
 
+    Pass want_chart=False to skip chart generation (uses a leaner prompt).
+    Pass want_insights=False to skip insight generation (uses a leaner prompt).
     Returns (vega_spec_dict_or_None, insights_list).
     """
-    if df is None or df.empty:
+    if df is None or df.empty or (not want_chart and not want_insights):
         return None, []
 
     schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
     data_json = df.to_json(orient="records", date_format="iso")
 
-    from config import CHART_AND_INSIGHTS_PROMPT
-    prompt = CHART_AND_INSIGHTS_PROMPT.format(
-        query=query,
-        schema=schema_str,
-        data_json=data_json,
-    )
+    from config import CHART_AND_INSIGHTS_PROMPT, CHART_ONLY_PROMPT, INSIGHTS_ONLY_PROMPT
+
+    if want_chart and want_insights:
+        prompt = CHART_AND_INSIGHTS_PROMPT.format(query=query, schema=schema_str, data_json=data_json)
+    elif want_chart:
+        prompt = CHART_ONLY_PROMPT.format(query=query, schema=schema_str, data_json=data_json)
+    else:
+        prompt = INSIGHTS_ONLY_PROMPT.format(query=query, schema=schema_str, data_json=data_json)
 
     raw = _strip_fences(chat(prompt)).strip()
 
@@ -201,21 +298,23 @@ def _generate_chart_and_insights(df: pd.DataFrame, query: str) -> tuple[dict | N
         if not isinstance(payload, dict):
             return None, []
 
-        spec = payload.get("vega_spec")
+        spec = payload.get("vega_spec") if want_chart else None
         if not isinstance(spec, dict):
             spec = None
 
-        insights = payload.get("insights", [])
+        insights = payload.get("insights", []) if want_insights else []
         if not isinstance(insights, list):
             insights = []
         insights = [str(i) for i in insights]
 
         if spec:
             print(f"[chart] Vega-Lite spec generated  |  {len(insights)} insight(s)")
+        elif want_insights:
+            print(f"[chart] {len(insights)} insight(s) generated (no chart)")
         return spec, insights
 
     except json.JSONDecodeError as exc:
-        print(f"[chart] invalid JSON from LLM — skipping chart+insights: {exc}")
+        print(f"[chart] invalid JSON from LLM — skipping: {exc}")
         return None, []
 
 
@@ -287,6 +386,19 @@ def _text_to_sql_search(query: str) -> SearchResult:
 
     if _duck_conn is None:
         return SearchResult(reply="No data loaded. Please upload a file first.")
+
+    # ── Intent classification (no extra LLM call) ────────────────────────────
+    intent = classify_intent(query)
+    print(f"[intent] {intent.value}")
+
+    # Write operations are not yet supported — return early
+    if intent == QueryIntent.WRITE:
+        return SearchResult(
+            reply=(
+                "Write operations on uploaded data are not yet supported. "
+                "This feature is coming soon!"
+            )
+        )
 
     # Short-circuit: broad summary queries use the pre-generated dataset summary
     if _is_summary_query(query) and _dataset_summary:
@@ -384,8 +496,25 @@ def _text_to_sql_search(query: str) -> SearchResult:
     )
     summary = chat(summary_prompt)
 
-    # ── Vega-Lite spec + analytical insights (single LLM call) ──────────────
-    vega_spec, insights = _generate_chart_and_insights(result_df, query)
+    # ── Conditionally generate chart / insights based on intent ─────────────
+    wants_chart = intent in (QueryIntent.ANSWER_WITH_CHART, QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS)
+    wants_insights = intent in (QueryIntent.ANSWER_WITH_INSIGHTS, QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS)
+
+    # Downgrade to answer-only when the result is too small to be meaningful
+    if (wants_chart or wants_insights) and len(result_df) <= 1:
+        wants_chart = False
+        wants_insights = False
+        print("[intent] downgraded to answer-only — result has ≤ 1 row")
+
+    if wants_chart or wants_insights:
+        vega_spec, insights = _generate_chart_and_insights(
+            result_df, query,
+            want_chart=wants_chart,
+            want_insights=wants_insights,
+        )
+    else:
+        vega_spec, insights = None, []
+        print(f"[intent] skipping chart+insights for intent={intent.value}")
 
     # Store Q+SQL+A triplet in vector memory for future context retrieval
     _store_conversation(query, sql, summary)

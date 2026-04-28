@@ -97,6 +97,81 @@ Return ONLY the raw JSON object. No markdown fences, no explanation.\
 """
 
 
+CHART_ONLY_PROMPT = """\
+You are a data visualization expert.
+
+User query: {query}
+
+Column names and dtypes:
+{schema}
+
+Data rows (JSON array):
+{data_json}
+
+Return a single JSON object with exactly two keys:
+
+{{
+  "vega_spec": <Vega-Lite v5 spec object> or null,
+  "insights": []
+}}
+
+─── vega_spec rules ───────────────────────────────────────────────────────────
+• Set to null when:
+    - fewer than 2 data rows
+    - result is a single scalar value (one COUNT / one total)
+    - no numeric column exists for a meaningful axis
+• "$schema": "https://vega.github.io/schema/vega-lite/v5.json"
+• Embed data inline:  "data": {{"values": [...]}}
+• "width": "container",  "height": 320
+• Include a concise "title" derived from the query
+• "tooltip": true  (or explicit per-field encoding)
+• Mark type selection:
+    "bar"   → categorical/nominal X + quantitative Y
+    "line"  → temporal or ordered X + quantitative Y
+    "point" → two quantitative axes (scatter)
+    "arc"   → proportions, ≤ 8 distinct categories (pie/donut)
+    "area"  → cumulative / filled time series
+• For bar charts with > 6 categories: flip axes (x = quantitative, y = nominal)
+• For "arc": use "theta" (quantitative) + "color" (nominal) encoding
+
+Always set "insights" to an empty array [].
+
+Return ONLY the raw JSON object. No markdown fences, no explanation.\
+"""
+
+
+INSIGHTS_ONLY_PROMPT = """\
+You are a data analytics expert.
+
+User query: {query}
+
+Column names and dtypes:
+{schema}
+
+Data rows (JSON array):
+{data_json}
+
+Return a single JSON object with exactly two keys:
+
+{{
+  "vega_spec": null,
+  "insights": ["insight 1", "insight 2", ...]
+}}
+
+─── insights rules ────────────────────────────────────────────────────────────
+• 2–4 concise, data-backed analytical observations about the result
+• Each insight must reference a concrete number, percentage, rank, or trend
+• Examples:
+    "Revenue grew 23% month-over-month in March"
+    "Electronics accounted for 40% of total sales — the highest category"
+• If the result is too sparse for meaningful insights, return an empty array []
+
+Always set "vega_spec" to null.
+
+Return ONLY the raw JSON object. No markdown fences, no explanation.\
+"""
+
+
 PDF_ANSWER_PROMPT = """\
 You are a helpful assistant answering questions about a PDF document.
 
