@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import pdfplumber
 from config import SCHEMA_AND_TEMPLATE_PROMPT
 from ai_client import store, chat
 
@@ -25,6 +26,17 @@ def generate_schema_and_template(df: pd.DataFrame) -> dict:
 
 def extract_headers_row(df: pd.DataFrame) -> str:
     return df.head(2).to_csv(index=False)
+
+
+def load_pdf_pages(filepath: str) -> list[dict]:
+    """Extract text from a PDF page by page. Returns [{page_num, text}, ...]."""
+    pages = []
+    with pdfplumber.open(filepath) as pdf:
+        for i, page in enumerate(pdf.pages):
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append({"page_num": i + 1, "text": text})
+    return pages
 
 
 def convert_rows_to_sentences(df: pd.DataFrame, template: str) -> None:

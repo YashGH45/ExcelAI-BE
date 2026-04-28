@@ -11,3 +11,5 @@ openpyxl
 duckdb
 psutil
 requests
+pdfplumber
+rank_bm25

@@ -7,6 +7,7 @@ from groq import Groq
 from openai.types.chat import ChatCompletionUserMessageParam, ChatCompletionSystemMessageParam
 import ollama
 import chromadb
+from rank_bm25 import BM25Okapi
 
 load_dotenv()
 
@@ -26,6 +27,12 @@ if USE_VECTOR_SEARCH:
 
 _duck_conn: duckdb.DuckDBPyConnection | None = None
 _dataset_summary: str | None = None
+
+# ── PDF PageIndex state (VectorLess BM25 retrieval) ──────────────────────────
+_current_mode: str = "excel"                  # "excel" | "pdf"
+_pdf_pages: list[dict] | None = None          # [{"page_num": N, "text": "..."}]
+_pdf_bm25: BM25Okapi | None = None
+_recent_pdf_turns: deque = deque(maxlen=5)    # (query, page_refs, answer)
 
 # ── Sequential turn buffer — primary context for follow-up resolution ────────
 # Stores (query, sql, answer) tuples in order; capped at 5 most recent turns.
@@ -50,6 +57,82 @@ def _is_summary_query(query: str) -> bool:
 def set_dataset_summary(summary: str) -> None:
     global _dataset_summary
     _dataset_summary = summary
+
+
+# ── PDF PageIndex helpers (VectorLess BM25) ──────────────────────────────────
+
+def set_mode(mode: str) -> None:
+    global _current_mode
+    _current_mode = mode
+
+
+def load_pdf_index(pages: list[dict]) -> None:
+    """Build a BM25 index over PDF pages. No embeddings — pure lexical ranking."""
+    global _pdf_pages, _pdf_bm25
+    _pdf_pages = pages
+    tokenized = [page["text"].lower().split() for page in pages]
+    _pdf_bm25 = BM25Okapi(tokenized)
+    print(f"[pdf-index] built BM25 index over {len(pages)} pages")
+
+
+def _store_pdf_conversation(query: str, page_refs: str, answer: str) -> None:
+    _recent_pdf_turns.append((query, page_refs, answer))
+
+
+def _format_recent_pdf_turns() -> str:
+    if not _recent_pdf_turns:
+        return ""
+    lines = []
+    for i, (q, p, a) in enumerate(_recent_pdf_turns):
+        label = "MOST RECENT" if i == len(_recent_pdf_turns) - 1 else f"Turn {i + 1}"
+        lines.append(f"[{label}]\nQ: {q}\nPages: {p}\nA: {a}")
+    return "\n\n".join(lines)
+
+
+def _pdf_search(query: str, top_k: int = 3) -> list[str]:
+    """Retrieve top-K pages via BM25 and ask the LLM to answer from them."""
+    if _pdf_bm25 is None or not _pdf_pages:
+        return ["No PDF loaded. Please upload a PDF file first."]
+
+    # BM25 scoring — no vectors, pure term-frequency / inverse-document-frequency
+    tokens = query.lower().split()
+    scores = _pdf_bm25.get_scores(tokens)
+    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+    context_parts = []
+    matched_page_nums = []
+    for idx in top_indices:
+        if scores[idx] > 0:
+            page = _pdf_pages[idx]
+            context_parts.append(f"[Page {page['page_num']}]\n{page['text']}")
+            matched_page_nums.append(str(page["page_num"]))
+
+    if not context_parts:
+        return ["I couldn't find any relevant content in the PDF for your question."]
+
+    context = "\n\n---\n\n".join(context_parts)
+
+    # Inject recent conversation turns for follow-up awareness
+    recent_str = _format_recent_pdf_turns()
+    history_block = (
+        f"Recent conversation history (oldest first; [MOST RECENT] is the direct predecessor):\n"
+        f"{recent_str}\n\n"
+        if recent_str else ""
+    )
+
+    from config import PDF_ANSWER_PROMPT
+    answer_prompt = PDF_ANSWER_PROMPT.format(
+        context=context,
+        history=history_block,
+        query=query,
+    )
+    answer = chat(answer_prompt)
+
+    page_refs = ", ".join(f"p.{p}" for p in matched_page_nums)
+    _store_pdf_conversation(query, page_refs, answer)
+    print(f"[pdf-index] answered from pages: {page_refs}")
+
+    return [answer]
 
 
 # ── Shared LLM helper ────────────────────────────────────────────────────────
@@ -277,19 +360,28 @@ def store_one(text: str, doc_id: str) -> None:
 
 
 def search(query: str, top_k: int = 3) -> list[str]:
+    # PDF mode: VectorLess BM25 PageIndex retrieval
+    if _current_mode == "pdf":
+        return _pdf_search(query, top_k)
+
     if USE_VECTOR_SEARCH:   # Preserved for future use
         query_vector = embed(query)
         results = collection.query(query_embeddings=[query_vector], n_results=top_k)
         return results["documents"][0]
 
-    # Text-to-SQL path
+    # Text-to-SQL path (Excel / CSV)
     return _text_to_sql_search(query)
 
 
 def delete() -> None:
-    global _duck_conn
-    # Clear sequential turn buffer so prior conversation doesn't bleed into a new session
+    global _duck_conn, _pdf_pages, _pdf_bm25, _current_mode
+    # Clear all conversation buffers so prior context doesn't bleed into a new session
     _recent_turns.clear()
+    _recent_pdf_turns.clear()
+    # Reset PDF state
+    _pdf_pages = None
+    _pdf_bm25 = None
+    _current_mode = "excel"
     if USE_VECTOR_SEARCH:   # Preserved for future use
         global collection
         _chroma_client.delete_collection("my_collection")

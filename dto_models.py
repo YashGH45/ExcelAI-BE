@@ -15,3 +15,4 @@ class UploadResponse(BaseModel):
     rows: int
     col_count: int
     columns: list[str]
+    file_type: str = "excel"   # "excel" | "pdf"

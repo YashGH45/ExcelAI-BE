@@ -46,3 +46,19 @@ DETAILED_SQL_PROMPT = """
 
 4. When a question explicitly refers to a single entity (e.g., 'that customer', 'the top-ranked item'), the subquery that identifies this entity must include LIMIT 1 to guarantee only one result is returned and avoid ambiguity.
 """
+
+
+PDF_ANSWER_PROMPT = """\
+You are a helpful assistant answering questions about a PDF document.
+
+Retrieved PDF pages:
+{context}
+
+{history}\
+Question: {query}
+
+Answer based solely on the provided page content. Cite page numbers where relevant \
+(e.g. "According to page 3..."). If the answer cannot be found in the retrieved pages, \
+say so clearly instead of guessing.
+Be concise and accurate.\
+"""
