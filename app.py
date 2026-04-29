@@ -2,7 +2,11 @@ import shutil
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from ai_client import search, delete, store_one, load_into_duckdb, set_dataset_summary, load_pdf_index, set_mode, SearchResult
+from fastapi.responses import FileResponse
+from ai_client import (
+    search, delete, store_one, load_into_duckdb,
+    set_dataset_summary, load_pdf_index, set_mode, set_current_filepath, SearchResult,
+)
 from config import UPLOAD_DIR
 from dto_models import ChatRequest, ChatResponse, UploadResponse
 from services import load_dataframe, convert_rows_to_sentences, generate_schema_and_template, load_pdf_pages
@@ -30,7 +34,24 @@ async def health():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(body: ChatRequest):
     result: SearchResult = search(body.message)
-    return ChatResponse(reply=result.reply, vega_spec=result.vega_spec, insights=result.insights)
+    return ChatResponse(
+        reply=result.reply,
+        vega_spec=result.vega_spec,
+        insights=result.insights,
+        download_url=result.download_url,
+    )
+
+
+@app.get("/api/download/{filename}")
+async def download_file(filename: str):
+    file_path = UPLOAD_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type="application/octet-stream",
+    )
 
 
 @app.post("/api/upload", response_model=UploadResponse)
@@ -77,6 +98,7 @@ async def upload_file(file: UploadFile = File(...)):
             # Register dataframe in DuckDB for the text-to-SQL path
             load_into_duckdb(df)
 
+        set_current_filepath(str(file_path))
         set_mode("excel")
 
     except Exception as e:

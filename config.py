@@ -172,6 +172,31 @@ Return ONLY the raw JSON object. No markdown fences, no explanation.\
 """
 
 
+CLEANSE_PROMPT = """\
+You are a data cleansing expert. Your task is to fix dirty rows in a dataset.
+
+Dataset schema (column name → dtype):
+{schema}
+
+Reference rows — clean, complete examples that show the expected values and formats:
+{reference_rows}
+
+Dirty rows to fix — may contain null values, placeholder strings like "N/A" / "null" / "unknown", \
+type mismatches, or inconsistent formatting:
+{dirty_rows}
+
+Rules:
+1. Infer correct values from the schema and reference rows for context.
+2. Fix null values, null-like strings, type mismatches, and formatting inconsistencies.
+3. If a value truly cannot be inferred, keep it as null.
+4. Preserve the "_row_index" field exactly as provided — it is required for mapping corrections back.
+5. Return ONLY the corrected dirty rows — do NOT include the reference rows.
+6. Do NOT change fields that are already correct.
+
+Return ONLY a raw JSON array of the corrected rows. No explanation, no markdown, no extra text.\
+"""
+
+
 PDF_ANSWER_PROMPT = """\
 You are a helpful assistant answering questions about a PDF document.
 

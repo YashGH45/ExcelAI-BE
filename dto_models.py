@@ -10,6 +10,7 @@ class ChatResponse(BaseModel):
     reply: str
     vega_spec: dict | None = None
     insights: list[str] = []
+    download_url: str | None = None
 
 
 class UploadResponse(BaseModel):

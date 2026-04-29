@@ -30,16 +30,19 @@ if USE_VECTOR_SEARCH:
 
 _duck_conn: duckdb.DuckDBPyConnection | None = None
 _dataset_summary: str | None = None
+_current_filepath: str | None = None  # Path of the currently loaded Excel/CSV file
 
 # ── PDF PageIndex state (VectorLess BM25 retrieval) ──────────────────────────
 _current_mode: str = "excel"
 _pdf_pages: list[dict] | None = None
 _pdf_bm25: BM25Okapi | None = None
 _recent_pdf_turns: deque = deque(maxlen=5)
+_pdf_conversation_summary: str = ""  # rolling summary of evicted PDF turns
 
 # ── Sequential turn buffer — primary context for follow-up resolution ────────
 # Stores (query, sql, answer) tuples in order; capped at 5 most recent turns.
 _recent_turns: deque = deque(maxlen=5)
+_conversation_summary: str = ""  # rolling summary of evicted Excel/CSV turns
 
 _SUMMARY_KEYWORDS = {
     "summary", "summarize", "summarise", "summarization",
@@ -60,7 +63,18 @@ class QueryIntent(Enum):
     ANSWER_WITH_INSIGHTS = "answer_with_insights"
     ANSWER_WITH_CHART_AND_INSIGHTS = "answer_with_chart_and_insights"
     WRITE = "write"
+    CLEANSE = "cleanse"
 
+
+# Phrases that signal a data cleansing / quality-fix request
+_CLEANSE_KEYWORDS = (
+    "cleanse", "clean the data", "clean the file", "clean up the data",
+    "clean up the file", "fix the data", "fix dirty", "fix missing values",
+    "fix errors in the data", "correct the data", "data cleansing",
+    "data cleaning", "sanitize the data", "sanitise the data",
+    "repair the data", "remove dirty rows", "handle missing",
+    "impute missing", "fix null", "fix nulls",
+)
 
 # Phrases/words that clearly signal a write/mutate operation on the data
 _WRITE_PHRASES = (
@@ -112,11 +126,15 @@ def classify_intent(query: str) -> QueryIntent:
     """
     q = query.lower().strip()
 
-    # 1. Write operations (highest priority) — placeholder for future feature
+    # 1. Data cleansing request
+    if any(kw in q for kw in _CLEANSE_KEYWORDS):
+        return QueryIntent.CLEANSE
+
+    # 2. Write operations — placeholder for future feature
     if any(phrase in q for phrase in _WRITE_PHRASES):
         return QueryIntent.WRITE
 
-    # 2. Explicit chart / insights requests
+    # 3. Explicit chart / insights requests
     has_chart = any(kw in q for kw in _CHART_KEYWORDS)
     has_insights = any(kw in q for kw in _INSIGHTS_KEYWORDS)
 
@@ -127,7 +145,7 @@ def classify_intent(query: str) -> QueryIntent:
     if has_insights:
         return QueryIntent.ANSWER_WITH_INSIGHTS
 
-    # 3. Aggregation signals — implies multi-row summary data that charts well
+    # 4. Aggregation signals — implies multi-row summary data that charts well
     has_aggregation = any(kw in q for kw in _AGGREGATION_KEYWORDS) or (
         " by " in q
         and not any(phrase in q for phrase in _NON_AGGREGATION_BY_PHRASES)
@@ -135,7 +153,7 @@ def classify_intent(query: str) -> QueryIntent:
     if has_aggregation:
         return QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS
 
-    # 4. Default: simple lookup — just return the answer
+    # 5. Default: simple lookup — just return the answer
     return QueryIntent.ANSWER_ONLY
 
 
@@ -145,6 +163,7 @@ class SearchResult:
     reply: str
     vega_spec: dict | None = field(default=None)
     insights: list = field(default_factory=list)
+    download_url: str | None = field(default=None)
 
 
 def _is_summary_query(query: str) -> bool:
@@ -155,6 +174,11 @@ def _is_summary_query(query: str) -> bool:
 def set_dataset_summary(summary: str) -> None:
     global _dataset_summary
     _dataset_summary = summary
+
+
+def set_current_filepath(filepath: str) -> None:
+    global _current_filepath
+    _current_filepath = filepath
 
 
 # ── PDF PageIndex helpers (VectorLess BM25) ──────────────────────────────────
@@ -173,6 +197,17 @@ def load_pdf_index(pages: list[dict]) -> None:
 
 
 def _store_pdf_conversation(query: str, page_refs: str, answer: str) -> None:
+    global _pdf_conversation_summary
+    if len(_recent_pdf_turns) == _recent_pdf_turns.maxlen:
+        oldest_q, oldest_p, oldest_a = _recent_pdf_turns[0]
+        compress_prompt = (
+            (f"Existing summary:\n{_pdf_conversation_summary}\n\n" if _pdf_conversation_summary else "") +
+            f"New turn to fold in:\nQ: {oldest_q}\nA: {oldest_a}\n\n"
+            "Update the summary in 2-3 sentences preserving key facts and page references. "
+            "Return only the updated summary text, nothing else."
+        )
+        _pdf_conversation_summary = chat(compress_prompt)
+        print(f"[memory] pdf summary updated ({len(_pdf_conversation_summary)} chars)")
     _recent_pdf_turns.append((query, page_refs, answer))
 
 
@@ -208,13 +243,18 @@ def _pdf_search(query: str, top_k: int = 3) -> SearchResult:
 
     context = "\n\n---\n\n".join(context_parts)
 
-    # Inject recent conversation turns for follow-up awareness
+    # Inject summary of older turns + recent verbatim turns
     recent_str = _format_recent_pdf_turns()
-    history_block = (
+    summary_block = (
+        f"Summary of earlier conversation:\n{_pdf_conversation_summary}\n\n"
+        if _pdf_conversation_summary else ""
+    )
+    recent_block = (
         f"Recent conversation history (oldest first; [MOST RECENT] is the direct predecessor):\n"
         f"{recent_str}\n\n"
         if recent_str else ""
     )
+    history_block = summary_block + recent_block
 
     from config import PDF_ANSWER_PROMPT
     answer_prompt = PDF_ANSWER_PROMPT.format(
@@ -262,6 +302,130 @@ def _strip_fences(text: str) -> str:
         cleaned = cleaned.split("\n", 1)[-1]   # drop opening fence line
         cleaned = cleaned.rsplit("```", 1)[0]   # drop closing fence
     return cleaned.strip()
+
+
+# ── Data cleansing helpers ────────────────────────────────────────────────────
+
+_NULL_LIKE_STRINGS = frozenset({
+    "n/a", "na", "null", "none", "nan", "#n/a", "#na", "-", "--",
+    "?", "unknown", "missing", "undefined", "nil", "void", "",
+})
+
+MAX_DIRTY_BATCH = 50  # Max dirty rows sent to LLM in a single call
+
+
+def _identify_dirty_rows(df: pd.DataFrame) -> pd.Index:
+    """Return the index positions of rows that have data quality issues."""
+    dirty_mask = pd.Series(False, index=df.index)
+
+    # 1. Any NaN / None in any column
+    dirty_mask |= df.isnull().any(axis=1)
+
+    # 2. Null-like placeholder strings in object (string) columns
+    for col in df.select_dtypes(include="object").columns:
+        col_lower = df[col].astype(str).str.lower().str.strip()
+        dirty_mask |= col_lower.isin(_NULL_LIKE_STRINGS)
+
+    # 3. Non-numeric strings in predominantly-numeric columns (type mismatch)
+    for col in df.select_dtypes(include="object").columns:
+        numeric_count = pd.to_numeric(df[col], errors="coerce").notna().sum()
+        if numeric_count / len(df) >= 0.7:          # column is mostly numeric
+            non_numeric = pd.to_numeric(df[col], errors="coerce").isna() & df[col].notna()
+            not_null_like = ~df[col].astype(str).str.lower().str.strip().isin(_NULL_LIKE_STRINGS)
+            dirty_mask |= non_numeric & not_null_like
+
+    return df.index[dirty_mask]
+
+
+def cleanse_data() -> SearchResult:
+    """Identify dirty rows in the loaded dataset, fix them via LLM, and save a
+    new cleansed file in the same format (Excel or CSV)."""
+    if _duck_conn is None:
+        return SearchResult(reply="No data loaded. Please upload a file first.")
+    if not _current_filepath:
+        return SearchResult(reply="Source file path not found. Please re-upload the file.")
+
+    df = _duck_conn.execute("SELECT * FROM data").df()
+    dirty_idx = _identify_dirty_rows(df)
+
+    if len(dirty_idx) == 0:
+        return SearchResult(reply="The dataset looks clean — no dirty rows were detected!")
+
+    dirty_df = df.loc[dirty_idx]
+    clean_df = df.drop(dirty_idx)
+
+    # Pick up to 5 fully-complete rows as reference examples for the LLM
+    reference_df = clean_df.dropna().head(5)
+    if reference_df.empty:
+        reference_df = df.head(5)   # fallback when all rows have some issue
+
+    schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
+    reference_json = reference_df.to_json(orient="records", date_format="iso")
+
+    from config import CLEANSE_PROMPT
+
+    corrected_rows: list[dict] = []
+    total_batches = (len(dirty_df) + MAX_DIRTY_BATCH - 1) // MAX_DIRTY_BATCH
+
+    for batch_num, start in enumerate(range(0, len(dirty_df), MAX_DIRTY_BATCH), 1):
+        batch = dirty_df.iloc[start : start + MAX_DIRTY_BATCH].copy()
+        # Attach the original DataFrame index so the LLM returns it with corrections
+        batch.insert(0, "_row_index", batch.index.tolist())
+        batch_json = batch.to_json(orient="records", date_format="iso")
+
+        print(f"[cleanse] batch {batch_num}/{total_batches} — {len(batch)} dirty rows")
+
+        prompt = CLEANSE_PROMPT.format(
+            schema=schema_str,
+            reference_rows=reference_json,
+            dirty_rows=batch_json,
+        )
+        raw = _strip_fences(chat(prompt)).strip()
+
+        try:
+            result = json.loads(raw)
+            if isinstance(result, list):
+                corrected_rows.extend(result)
+            else:
+                print(f"[cleanse] batch {batch_num} — unexpected response structure, skipping")
+        except json.JSONDecodeError as exc:
+            print(f"[cleanse] batch {batch_num} — invalid JSON: {exc}")
+
+    # Apply LLM corrections back into a copy of the full DataFrame
+    result_df = df.copy()
+    applied = 0
+    for row in corrected_rows:
+        idx = row.pop("_row_index", None)
+        if idx is None or idx not in result_df.index:
+            continue
+        for col, val in row.items():
+            if col in result_df.columns:
+                result_df.at[idx, col] = val
+        applied += 1
+
+    # Save cleansed file next to the original, with a "_cleansed" suffix
+    base, ext = os.path.splitext(_current_filepath)
+    cleansed_path = f"{base}_cleansed{ext}"
+    cleansed_filename = os.path.basename(cleansed_path)
+
+    if ext.lower() == ".csv":
+        result_df.to_csv(cleansed_path, index=False)
+    else:
+        result_df.to_excel(cleansed_path, index=False)
+
+    print(f"[cleanse] saved → {cleansed_path}")
+
+    summary = (
+        f"Data cleansing complete!\n\n"
+        f"- **{len(dirty_idx)}** dirty rows detected out of **{len(df)}** total\n"
+        f"- **{applied}** rows corrected by the AI\n"
+        f"- Cleansed file: `{cleansed_filename}`\n\n"
+        f"Use the download button below to get the cleansed file."
+    )
+    return SearchResult(
+        reply=summary,
+        download_url=f"/api/download/{cleansed_filename}",
+    )
 
 
 def _generate_chart_and_insights(
@@ -330,6 +494,18 @@ def _embed_for_memory(text: str) -> list[float] | None:
 
 
 def _store_conversation(query: str, sql: str, answer: str) -> None:
+    global _conversation_summary
+    # Summarize the oldest turn before it gets evicted from the buffer
+    if len(_recent_turns) == _recent_turns.maxlen:
+        oldest_q, oldest_sql, oldest_a = _recent_turns[0]
+        compress_prompt = (
+            (f"Existing summary:\n{_conversation_summary}\n\n" if _conversation_summary else "") +
+            f"New turn to fold in:\nQ: {oldest_q}\nA: {oldest_a}\n\n"
+            "Update the summary in 2-3 sentences preserving key facts, column names, "
+            "filter values, and numeric results. Return only the updated summary text, nothing else."
+        )
+        _conversation_summary = chat(compress_prompt)
+        print(f"[memory] summary updated ({len(_conversation_summary)} chars)")
     # Sequential buffer — always reliable for immediate follow-ups
     _recent_turns.append((query, sql, answer))
 
@@ -408,8 +584,12 @@ def _text_to_sql_search(query: str) -> SearchResult:
     schema_rows = _duck_conn.execute("DESCRIBE SELECT * FROM data").fetchall()
     schema_str = "\n".join(f"  {col}" for col, *_ in schema_rows)
 
-    # Step 2 – build context block: sequential buffer first, vector fallback second
+    # Step 2 – build context block: summary → recent verbatim → vector fallback
     recent_str = _format_recent_turns()
+    summary_block = (
+        f"Summary of earlier conversation:\n{_conversation_summary}\n\n"
+        if _conversation_summary else ""
+    )
     recent_block = (
         f"Recent conversation history (oldest first; [MOST RECENT] is the direct predecessor):\n"
         f"{recent_str}\n\n"
@@ -422,15 +602,16 @@ def _text_to_sql_search(query: str) -> SearchResult:
         if past_context else ""
     )
 
+    has_context = bool(summary_block or recent_block or vector_block)
     memory_block = (
-        (recent_block + vector_block)
+        (summary_block + recent_block + vector_block)
         +
         "CRITICAL RULE FOR FOLLOW-UPS — When the question uses pronouns like 'them', 'those', "
         "'that room', 'those guests', etc., you MUST resolve them by wrapping the SQL from the "
         "[MOST RECENT] turn above as a subquery or CTE. "
         "NEVER hardcode room numbers, names, or any specific values copied from a text answer. "
         "Always compose the answer using SQL subqueries so the scope is exactly correct.\n\n"
-        if recent_block or vector_block else ""
+        if has_context else ""
     )
 
     sql_prompt = (
@@ -474,6 +655,35 @@ def _text_to_sql_search(query: str) -> SearchResult:
                 f"I was unable to answer your question after {MAX_SQL_RETRIES} attempts. "
                 f"Last error: {last_error}"
             )
+        )
+
+    # ── Fuzzy-match retry — if exact query returned 0 rows, try ILIKE ────────
+    if result_df.empty:
+        print("[sql-agent] exact query returned 0 rows — retrying with fuzzy ILIKE match")
+        fuzzy_prompt = (
+            f"The following DuckDB SQL query:\n{sql}\n\n"
+            f"Ran successfully but returned 0 rows for the question: {query}\n"
+            f"Table schema:\n{schema_str}\n\n"
+            "The string filter likely missed due to case differences or slight name variations. "
+            "Rewrite the query replacing any exact string equality (=) filters on text/name columns "
+            "with case-insensitive partial matches using ILIKE '%value%'. "
+            "Keep all other parts of the query identical. "
+            "Return only the corrected SQL — no explanation, no markdown, no backticks."
+        )
+        fuzzy_sql = _strip_fences(chat(fuzzy_prompt))
+        try:
+            fuzzy_df = _duck_conn.execute(fuzzy_sql).df()
+            if not fuzzy_df.empty:
+                result_df = fuzzy_df
+                sql = fuzzy_sql
+                print(f"[sql-agent] fuzzy retry found {len(fuzzy_df)} row(s)")
+            else:
+                print("[sql-agent] fuzzy retry also returned 0 rows")
+        except Exception as fuzzy_err:
+            print(f"[sql-agent] fuzzy retry failed: {fuzzy_err}")
+
+    if result_df is None:
+        return SearchResult(reply="Unexpected error: result was lost after fuzzy retry."
         )
 
     # Truncate before both summary and chart generation
@@ -547,6 +757,11 @@ def search(query: str, top_k: int = 3) -> SearchResult:
     if _current_mode == "pdf":
         return _pdf_search(query, top_k)
 
+    # Check for file-level operations before the SQL path
+    intent = classify_intent(query)
+    if intent == QueryIntent.CLEANSE:
+        return cleanse_data()
+
     if USE_VECTOR_SEARCH:   # Preserved for future use
         query_vector = embed(query)
         results = collection.query(query_embeddings=[query_vector], n_results=top_k)
@@ -557,14 +772,22 @@ def search(query: str, top_k: int = 3) -> SearchResult:
 
 
 def delete() -> None:
-    global _duck_conn, _pdf_pages, _pdf_bm25, _current_mode
+    global _duck_conn, _pdf_pages, _pdf_bm25, _current_mode, _current_filepath
+    global _conversation_summary, _pdf_conversation_summary
     # Clear all conversation buffers so prior context doesn't bleed into a new session
     _recent_turns.clear()
     _recent_pdf_turns.clear()
+    _conversation_summary = ""
+    _pdf_conversation_summary = ""
+    _chroma_client.delete_collection("conversation_memory")
+    global _conv_collection
+    _conv_collection = _chroma_client.get_or_create_collection("conversation_memory")
+
     # Reset PDF state
     _pdf_pages = None
     _pdf_bm25 = None
     _current_mode = "excel"
+    _current_filepath = None
     if USE_VECTOR_SEARCH:   # Preserved for future use
         global collection
         _chroma_client.delete_collection("my_collection")
