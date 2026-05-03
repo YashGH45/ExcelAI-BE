@@ -197,6 +197,47 @@ Return ONLY a raw JSON array of the corrected rows. No explanation, no markdown,
 """
 
 
+RICH_METADATA_PROMPT = """\
+You are a data analyst generating rich metadata for a dataset.
+
+Dataset schema (column name → dtype):
+{schema}
+
+Sample rows (first {sample_count} rows):
+{sample_csv}
+
+Generate a comprehensive metadata object. Return a single JSON object:
+
+{{
+  "table": {{
+    "description": "What this table represents (1-2 sentences)",
+    "grain": "One row = one [entity] (e.g. one order, one guest stay, one product)",
+    "time_range": "Approximate time range of the data, or null if no date column exists",
+    "caveats": ["known data quality issue or limitation if detectable from sample, else empty"]
+  }},
+  "columns": [
+    {{
+      "column": "<exact column name as it appears in the schema>",
+      "type": "<inferred type: INTEGER, FLOAT, TEXT, DATE, BOOLEAN, CATEGORICAL>",
+      "description": "<what this column represents, including units if numeric>",
+      "example_values": [<3-5 representative values drawn from the sample rows>],
+      "aliases": ["<alternate names a non-technical user might say to refer to this column>"],
+      "related_columns": ["<other column names from the schema that are semantically linked>"]
+    }}
+  ]
+}}
+
+Rules:
+- Include exactly one entry per column in the schema — no omissions, no extras
+- For aliases, think about how a business user might phrase the column (e.g. "revenue" → ["income", "earnings", "money made", "total sales"])
+- For related_columns, only reference column names that actually exist in the provided schema
+- Use CATEGORICAL type when a column is likely to have fewer than 20 distinct values
+- For time_range, inspect the sample values to infer an approximate range (e.g. "2022–2024"); use null if no date column exists
+- If caveats cannot be detected from the sample, return an empty array []
+- Return ONLY the raw JSON object. No markdown fences, no explanation.\
+"""
+
+
 PDF_ANSWER_PROMPT = """\
 You are a helpful assistant answering questions about a PDF document.
 

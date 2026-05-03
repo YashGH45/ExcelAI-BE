@@ -5,11 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from ai_client import (
     search, delete, store_one, load_into_duckdb,
-    set_dataset_summary, load_pdf_index, set_mode, set_current_filepath, SearchResult,
+    set_dataset_summary, load_pdf_index, set_mode, set_current_filepath,
+    store_metadata_in_vectordb, SearchResult,
 )
 from config import UPLOAD_DIR
 from dto_models import ChatRequest, ChatResponse, UploadResponse
-from services import load_dataframe, convert_rows_to_sentences, generate_schema_and_template, load_pdf_pages
+from services import (
+    load_dataframe, convert_rows_to_sentences,
+    generate_schema_and_template, generate_rich_metadata, load_pdf_pages,
+)
 
 app = FastAPI()
 
@@ -95,8 +99,13 @@ async def upload_file(file: UploadFile = File(...)):
             convert_rows_to_sentences(df, template)
 
         else:
-            # Register dataframe in DuckDB for the text-to-SQL path
             load_into_duckdb(df)
+
+            try:
+                metadata = generate_rich_metadata(df)
+                store_metadata_in_vectordb(metadata)
+            except Exception as meta_err:
+                print(f"[metadata] rich metadata generation failed (non-fatal): {meta_err}")
 
         set_current_filepath(str(file_path))
         set_mode("excel")

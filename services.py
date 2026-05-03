@@ -40,6 +40,24 @@ def load_dataframe(filepath: str) -> pd.DataFrame:
     return df
 
 
+def generate_rich_metadata(df: pd.DataFrame) -> dict:
+    from config import RICH_METADATA_PROMPT
+    schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
+    sample_df = df.head(5)
+    sample_csv = sample_df.to_csv(index=False)
+    prompt = RICH_METADATA_PROMPT.format(
+        schema=schema_str,
+        sample_count=len(sample_df),
+        sample_csv=sample_csv,
+    )
+    response = chat(prompt)
+    cleaned = response.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        cleaned = cleaned.rsplit("```", 1)[0]
+    return json.loads(cleaned.strip())
+
+
 def generate_schema_and_template(df: pd.DataFrame) -> dict:
     prompt = SCHEMA_AND_TEMPLATE_PROMPT + "\n" + extract_headers_row(df)
     response = chat(prompt)
