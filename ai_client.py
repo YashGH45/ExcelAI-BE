@@ -18,8 +18,6 @@ USE_VECTOR_SEARCH = False
 
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 groq_chat_model = os.environ["GROQ_CHAT_MODEL"]
-groq_mini_chat_model = os.environ["GROQ_MINI_CHAT_MODEL"]
-gemma_model = os.environ["GEMMA_MODEL"]
 
 # ── ChromaDB — always-on for conversation memory ─────────────────────────────
 _chroma_client = chromadb.PersistentClient(path="./vector_db")
