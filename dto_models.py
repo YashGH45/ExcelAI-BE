@@ -1,6 +1,13 @@
 from pydantic import BaseModel
 
 
+class SmartParserQuestion(BaseModel):
+    id: str
+    label: str
+    placeholder: str
+    required: bool
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None

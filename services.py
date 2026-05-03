@@ -40,15 +40,54 @@ def load_dataframe(filepath: str) -> pd.DataFrame:
     return df
 
 
-def generate_rich_metadata(df: pd.DataFrame) -> dict:
+def generate_smart_parser_questions(df: pd.DataFrame) -> list[dict]:
+    """Ask the LLM what it's uncertain about so the user can clarify before metadata generation."""
+    from config import SMART_PARSER_QUESTIONS_PROMPT
+    schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
+    sample_df = df.head(5)
+    prompt = SMART_PARSER_QUESTIONS_PROMPT.format(
+        schema=schema_str,
+        sample_count=len(sample_df),
+        sample_csv=sample_df.to_csv(index=False),
+    )
+    response = chat(prompt)
+    cleaned = response.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        cleaned = cleaned.rsplit("```", 1)[0]
+    return json.loads(cleaned.strip())
+
+
+def generate_rich_metadata(df: pd.DataFrame, answers: list[dict] | None = None) -> dict:
+    """Generate rich table + column metadata via a single LLM call.
+
+    answers: optional list of {"id": str, "answer": str} from the smart-parser
+             clarification step. When provided, the LLM incorporates them into
+             the metadata instead of having to guess.
+    """
     from config import RICH_METADATA_PROMPT
     schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
     sample_df = df.head(5)
     sample_csv = sample_df.to_csv(index=False)
+
+    if answers:
+        filled = [a for a in answers if a.get("answer", "").strip()]
+        if filled:
+            lines = "\n".join(f"  - {a['id']}: {a['answer']}" for a in filled)
+            user_context = (
+                "User-provided clarifications — treat these as ground truth when writing descriptions:\n"
+                f"{lines}\n"
+            )
+        else:
+            user_context = ""
+    else:
+        user_context = ""
+
     prompt = RICH_METADATA_PROMPT.format(
         schema=schema_str,
         sample_count=len(sample_df),
         sample_csv=sample_csv,
+        user_context=user_context,
     )
     response = chat(prompt)
     cleaned = response.strip()

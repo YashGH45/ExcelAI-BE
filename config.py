@@ -234,7 +234,44 @@ Rules:
 - Use CATEGORICAL type when a column is likely to have fewer than 20 distinct values
 - For time_range, inspect the sample values to infer an approximate range (e.g. "2022–2024"); use null if no date column exists
 - If caveats cannot be detected from the sample, return an empty array []
+{user_context}\
 - Return ONLY the raw JSON object. No markdown fences, no explanation.\
+"""
+
+
+SMART_PARSER_QUESTIONS_PROMPT = """\
+You are a data analyst examining a new dataset. Your goal is to ask the user up to 7 clarifying questions \
+whose answers will help you generate rich, accurate metadata.
+
+Dataset schema (column name → dtype):
+{schema}
+
+Sample rows (first {sample_count} rows):
+{sample_csv}
+
+Identify the things you are genuinely UNSURE about — things that cannot be reliably inferred from column names \
+and the sample values alone. Good question topics:
+- Business meaning or units of a numeric column (e.g. is "amount" in USD, EUR, thousands?)
+- What a status code or enum value means (e.g. status=1 vs status=2)
+- Grain of the data (one row = one what?)
+- Whether a column is a raw value or a derived/calculated field
+- Known caveats or data quality limitations
+- Time period the data covers, if unclear from sample dates
+- Whether an ID column is a foreign key to another system
+
+Do NOT ask about things that are already self-evident from the column name and sample values.
+
+Return a JSON array of question objects — maximum 7 items:
+[
+  {{
+    "id": "<short_snake_case_identifier unique to this question>",
+    "label": "<clear, plain-English question for the user>",
+    "placeholder": "<brief example answer or hint, e.g. 'One row = one hotel booking'>",
+    "required": true
+  }}
+]
+
+Return ONLY the raw JSON array. No markdown fences, no explanation.\
 """
 
 
