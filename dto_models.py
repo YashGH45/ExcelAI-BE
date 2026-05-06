@@ -8,6 +8,16 @@ class SmartParserQuestion(BaseModel):
     required: bool
 
 
+class SmartParserAnswer(BaseModel):
+    id: str
+    answer: str
+
+
+class SmartParserAnswersRequest(BaseModel):
+    session_id: str | None = None
+    answers: list[SmartParserAnswer]
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
