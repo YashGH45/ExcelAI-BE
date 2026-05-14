@@ -1,25 +1,21 @@
 import shutil
+
 import chromadb
 
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from ai_client import (
-    search, load_into_duckdb, load_pdf_index,
-    store_metadata_in_vectordb, SearchResult,
-)
+
 from session import SessionManager
 from config import UPLOAD_DIR
 from dto_models import (
     ChatRequest, ChatResponse, UploadResponse,
-    SmartParserQuestion, SmartParserAnswersRequest,
+    SmartParserQuestion, SmartParserAnswersRequest, SearchResult,
 )
-from services import (
-    load_dataframe,
-    generate_rich_metadata,
-    generate_smart_parser_questions,
-    load_pdf_pages,
-)
+from search import search
+from pdf_handler import load_pdf_index
+from metadata import store_metadata_in_vectordb, generate_rich_metadata, generate_smart_parser_questions, generate_schema_summary
+from file_loader import load_dataframe, load_pdf_pages, load_into_duckdb, load_pdf_file
 
 app = FastAPI()
 
@@ -90,7 +86,7 @@ async def upload_file(
     try:
         session = session_manager.reset(sid)
 
-        # ── PDF path ──────────────────────────────────────────────────────────
+        # ── PDF file ──────────────────────────────────────────────────────────
         if filename.lower().endswith(".pdf"):
             pages = load_pdf_pages(str(file_path))
             if not pages:
@@ -109,7 +105,8 @@ async def upload_file(
                 file_type="pdf",
             )
 
-        # ── Excel / CSV path ──────────────────────────────────────────────────
+
+        # ── Excel / CSV file ──────────────────────────────────────────────────
         df = load_dataframe(str(file_path))
         load_into_duckdb(df, session)
         session.smart_parser_df = df
@@ -119,6 +116,7 @@ async def upload_file(
             try:
                 metadata = generate_rich_metadata(df)
                 store_metadata_in_vectordb(metadata, session)
+                session.dataset_summary = generate_schema_summary(metadata)
             except Exception as meta_err:
                 print(f"[metadata] generation failed (non-fatal): {meta_err}")
         # smart_parser_mode: metadata generation is deferred until the client
@@ -143,11 +141,6 @@ async def upload_file(
 
 @app.get("/api/smart-parser/questions", response_model=list[SmartParserQuestion])
 async def smart_parser_questions(session_id: str | None = None):
-    """Return up to 7 LLM-generated clarification questions for the uploaded file.
-
-    Call after POST /api/upload (smart_parser=true).
-    Pass the same session_id as a query parameter.
-    """
     sid = session_id or _ANON
     session = session_manager.get(sid)
     if session is None:
@@ -170,13 +163,6 @@ async def smart_parser_questions(session_id: str | None = None):
 
 @app.post("/api/smart-parser/answers")
 async def smart_parser_submit_answers(body: SmartParserAnswersRequest):
-    """Submit user answers to the smart-parser clarification questions.
-
-    This triggers metadata generation enriched with the provided answers and
-    stores the result in the session's vector DB, making the file ready for chat.
-
-    Call after GET /api/smart-parser/questions and collecting the user's responses.
-    """
     sid = body.session_id or _ANON
     session = session_manager.get(sid)
     if session is None:
@@ -195,6 +181,7 @@ async def smart_parser_submit_answers(body: SmartParserAnswersRequest):
     try:
         metadata = generate_rich_metadata(df, answers=answers)
         store_metadata_in_vectordb(metadata, session)
+        session.dataset_summary = generate_schema_summary(metadata)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate metadata: {e}")
 

@@ -1,4 +1,13 @@
+from dataclasses import dataclass, field
 from pydantic import BaseModel
+
+
+@dataclass
+class SearchResult:
+    reply: str
+    vega_spec: dict | None = field(default=None)
+    insights: list = field(default_factory=list)
+    download_url: str | None = field(default=None)
 
 
 class SmartParserQuestion(BaseModel):
