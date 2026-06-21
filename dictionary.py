@@ -1,3 +1,10 @@
+_CHART_KEYWORDS = (
+    "plot", "chart", "graph", "visualize", "visualise",
+    "visualization", "visualisation", "bar chart", "line chart",
+    "pie chart", "scatter", "histogram", "show me a chart",
+    "draw a chart", "draw a graph",
+)
+
 _SUMMARY_KEYWORDS = (
     "summary", "summarize", "summarise", "summarization",
     "overview", "describe the data", "describe the dataset",

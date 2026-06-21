@@ -248,13 +248,30 @@ Be concise and accurate.\
 """
 
 INTENT_PROMPT = """
-Classify this query into one of: CLEANSE, WRITE, ANSWER_WITH_CHART, 
-ANSWER_WITH_INSIGHTS, ANSWER_WITH_CHART_AND_INSIGHTS, ANSWER_ONLY.
+Classify the user query into exactly one of these intents:
+
+  ANSWER_WITH_CHART_AND_INSIGHTS — user explicitly asks for a chart/plot/graph AND wants analysis,
+      OR the query is analytical and would benefit from both a visualization and insights.
+      Examples: "plot revenue by region", "show me a bar chart of sales", "visualize top 10 orders",
+                "can you plot a chart for this", "graph the gross profit trend"
+
+  ANSWER_WITH_CHART — user explicitly requests only a chart/plot/graph with no analysis needed.
+      Examples: "just show the chart", "draw a pie chart of categories"
+
+  ANSWER_WITH_INSIGHTS — user wants data-backed analysis/observations but no chart.
+      Examples: "what trends do you see?", "give me insights on revenue", "analyze the sales data"
+
+  ANSWER_ONLY — simple lookup, count, filter, or factual question that needs only a text answer.
+      Examples: "what is the total revenue?", "list all orders from January", "how many rows?"
+
+  CLEANSE — user wants to clean, fix, or repair dirty/missing data.
+
+  WRITE — user wants to modify, update, delete, or insert data.
 
 Query: {query}
 Schema context: {schema_summary}
 
-Return JSON: {{"intent": "...", "confidence": 0.0-1.0}}
+Return JSON only: {{"intent": "<one of the intents above>", "confidence": 0.0-1.0}}
 """
 
 

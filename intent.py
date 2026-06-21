@@ -1,7 +1,7 @@
 import json
 from enum import Enum
 from dictionary import (
-    _CLEANSE_KEYWORDS, _WRITE_PHRASES
+    _CLEANSE_KEYWORDS, _WRITE_PHRASES, _CHART_KEYWORDS
 )
 from llm import get_response_from_llm, strip_fences
 
@@ -23,6 +23,9 @@ def classify_intent(query: str, schema_summary: str = "") -> QueryIntent:
 
     if any(phrase in q for phrase in _WRITE_PHRASES):
         return QueryIntent.WRITE
+
+    if any(kw in q for kw in _CHART_KEYWORDS):
+        return QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS
 
     # Everything else is ambiguous — let the LLM decide
     return classify_intent_with_llm(query, schema_summary)

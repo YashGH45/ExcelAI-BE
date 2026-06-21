@@ -15,7 +15,7 @@ from dto_models import (
 from search import search
 from pdf_handler import load_pdf_index
 from metadata import store_metadata_in_vectordb, generate_rich_metadata, generate_smart_parser_questions, generate_schema_summary
-from file_loader import load_dataframe, load_pdf_pages, load_into_duckdb, load_pdf_file
+from file_loader import load_dataframe, load_pdf_pages, load_into_duckdb
 
 app = FastAPI()
 
