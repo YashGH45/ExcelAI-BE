@@ -1,0 +1,9 @@
+FILE: search.py
+PURPOSE: Single dispatch function that routes to pdf_search or text_to_sql_search based on session mode.
+IMPORTS: session, intent, pdf_handler, cleanse, sql_agent, dto_models
+
+FUNCTIONS:
+  search(query, session, top_k=3) -> SearchResult
+    if session.current_mode == "pdf" → pdf_handler.pdf_search
+    else classify intent → CLEANSE → cleanse.cleanse_data
+                         → all others → sql_agent.text_to_sql_search

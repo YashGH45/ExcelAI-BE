@@ -163,7 +163,6 @@ def generate_schema_summary(metadata: dict) -> str:
 
 
 def generate_smart_parser_questions(df: pd.DataFrame) -> list[dict]:
-    """Ask the LLM what it's uncertain about so the user can clarify before metadata generation."""
     from config import SMART_PARSER_QUESTIONS_PROMPT
     schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
     sample_df = df.head(5)

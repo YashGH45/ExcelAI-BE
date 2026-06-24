@@ -1,0 +1,11 @@
+FILE: gen_graph.py
+PURPOSE: CLI dev tool — AST-parses all project .py files and regenerates graph.json automatically.
+IMPORTS: ast, json, pathlib
+
+FUNCTIONS:
+  parse_file(path) -> dict        Extracts imports, classes, functions via ast.walk
+  local_dep(imports, file_names)  Filters import list to only project-local modules
+  build_graph()                   Walks project root (excluding EXCLUDE dirs), calls parse_file, writes graph.json
+
+RUN: python gen_graph.py
+EXCLUDE dirs: venv, __pycache__, .git, uploads, vector_db

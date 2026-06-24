@@ -1,0 +1,8 @@
+FILE: main.py
+PURPOSE: CLI entrypoint — frees port 8000 if occupied, then starts the FastAPI app with uvicorn.
+IMPORTS: psutil, uvicorn
+
+FUNCTIONS:
+  free_port(port)   Iterates psutil processes, kills any holding the given port.
+
+RUN: python main.py   (starts on 127.0.0.1:8000, reload=False)

@@ -1,0 +1,12 @@
+FILE: dto_models.py
+PURPOSE: All Pydantic BaseModel and dataclass shapes used across the API boundary.
+IMPORTS: dataclasses, pydantic
+
+CLASSES:
+  SearchResult (dataclass)   reply, vega_spec, insights, download_url
+  SmartParserQuestion        id, label, placeholder, required
+  SmartParserAnswer          id, answer
+  SmartParserAnswersRequest  session_id, answers: list[SmartParserAnswer]
+  ChatRequest                (fields not shown — check file)
+  ChatResponse               (fields not shown — check file)
+  UploadResponse             (fields not shown — check file)

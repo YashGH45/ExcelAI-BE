@@ -1,0 +1,15 @@
+FILE: cleanse.py
+PURPOSE: Detects dirty rows (nulls, type mismatches, null-like strings) and LLM-repairs them in batches.
+IMPORTS: os, json, pandas, session, llm, dto_models
+
+CONSTANTS:
+  MAX_DIRTY_BATCH = 50
+  _NULL_LIKE_STRINGS  frozenset of strings treated as null ("n/a", "null", "?", etc.)
+
+FUNCTIONS:
+  _identify_dirty_rows(df) -> pd.Index
+    Returns index of rows with: null values OR null-like strings OR type mismatches (numeric col with string values).
+
+  cleanse_data(session) -> SearchResult
+    Loads DataFrame from session, identifies dirty rows, sends batches to LLM for repair instructions,
+    applies fixes, overwrites file, reloads into DuckDB.

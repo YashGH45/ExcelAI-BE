@@ -1,0 +1,17 @@
+app.py | module | FastAPI app; all HTTP endpoints (chat, upload, download, smart-parser) | FastAPI, SessionManager, search, store_metadata_in_vectordb, load_dataframe
+main.py | module | Process entrypoint; kills port 8000, starts uvicorn | free_port, uvicorn
+session.py | module | Per-user session state and SessionManager | Session, SessionManager, duck_conn, pdf_bm25, recent_turns
+config.py | module | All LLM prompt templates and path constants | UPLOAD_DIR, CHART_AND_INSIGHTS_PROMPT, CHART_ONLY_PROMPT, INSIGHTS_ONLY_PROMPT
+dto_models.py | module | Pydantic/dataclass API request-response models | SearchResult, ChatRequest, ChatResponse, UploadResponse, SmartParserQuestion
+llm.py | module | LLM abstraction; routes to Ollama or Groq via LLM_BACKEND env var | get_response_from_llm, strip_fences
+intent.py | module | Query intent classifier (chart/cleanse/write/answer) | QueryIntent, classify_intent, classify_intent_with_llm
+search.py | module | Top-level dispatcher; routes to pdf_search or text_to_sql_search | search
+sql_agent.py | module | NL→DuckDB SQL pipeline with retry, fuzzy fallback, chart generation | text_to_sql_search, _generate_sql, _execute_with_retry
+metadata.py | module | Rich column metadata generation and ChromaDB vector retrieval | generate_rich_metadata, store_metadata_in_vectordb, retrieve_relevant_metadata
+memory.py | module | Rolling conversation memory with Ollama embeddings and summary compression | store_conversation, retrieve_similar_conversations, format_recent_turns
+charts.py | module | Generates Vega-Lite specs and insight bullets from DataFrame via LLM | generate_chart_and_insights
+cleanse.py | module | Detects and LLM-repairs dirty rows (nulls, type mismatches) | cleanse_data, _identify_dirty_rows
+file_loader.py | module | Loads Excel/CSV into pandas+DuckDB; normalises headers to snake_case | load_dataframe, load_into_duckdb, load_pdf_pages
+pdf_handler.py | module | BM25 PDF index and keyword-based PDF Q&A with conversation memory | load_pdf_index, pdf_search
+dictionary.py | module | Keyword constant lists for intent classification | _CHART_KEYWORDS, _SUMMARY_KEYWORDS, _CLEANSE_KEYWORDS, _WRITE_PHRASES
+gen_graph.py | module | CLI script: AST-parses project files to regenerate graph.json | parse_file, build_graph, local_dep

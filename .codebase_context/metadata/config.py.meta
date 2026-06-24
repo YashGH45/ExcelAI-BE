@@ -1,0 +1,12 @@
+FILE: config.py
+PURPOSE: All LLM prompt templates (chart, insights, SQL, metadata, cleanse) and path constants.
+IMPORTS: pathlib
+
+KEY SYMBOLS:
+  UPLOAD_DIR                   Path("uploads")
+  CHART_AND_INSIGHTS_PROMPT    Full prompt requesting both vega_spec + insights JSON
+  CHART_ONLY_PROMPT            Prompt requesting vega_spec only
+  INSIGHTS_ONLY_PROMPT         Prompt requesting insights only
+  (additional prompts for SQL generation, metadata generation, cleanse repair)
+
+NOTE: This is the largest file (300 lines). Editing prompts here affects all LLM behaviour.

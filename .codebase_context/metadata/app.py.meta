@@ -1,0 +1,20 @@
+FILE: app.py
+PURPOSE: FastAPI application; all HTTP API endpoints.
+IMPORTS: fastapi, chromadb, session, config, dto_models, search, pdf_handler, metadata, file_loader
+
+ENDPOINTS:
+  GET  /api/health                      → 200 OK liveness check
+  POST /api/chat                        → ChatRequest → SearchResult via search()
+  GET  /api/download/{filename}         → FileResponse from UPLOAD_DIR
+  POST /api/upload                      → UploadFile → UploadResponse; loads DataFrame, generates metadata, stores in ChromaDB
+  GET  /api/smart-parser/questions      → Returns SmartParserQuestion list for active session
+  POST /api/smart-parser/answers        → Accepts SmartParserAnswersRequest; regenerates metadata with user answers
+
+KEY GLOBALS:
+  _chroma_client   PersistentClient at ./vector_db
+  session_manager  SessionManager singleton
+
+NOTES:
+  - CORS allows http://localhost:5173 (Vite dev server)
+  - Upload detects file type (excel/csv/pdf) and sets session.current_mode accordingly
+  - Smart Parser flow: upload → GET questions → POST answers → metadata regenerated with richer context

@@ -1,0 +1,20 @@
+FILE: sql_agent.py
+PURPOSE: Converts natural language queries to DuckDB SQL; executes with retry loop and fuzzy fallback; returns answer + optional chart.
+IMPORTS: session, intent, llm, metadata, memory, charts, dictionary, dto_models
+
+KEY CONSTANTS:
+  MAX_RESULT_ROWS = 20
+  MAX_SQL_RETRIES = 5
+
+FUNCTIONS:
+  text_to_sql_search(query, session, intent) -> SearchResult    — main entry point
+  _generate_sql(query, schema_str, metadata_section, memory_block) -> str
+  _execute_with_retry(sql, query, schema_str, session)          — retries on DuckDB errors, asks LLM to fix SQL
+  _apply_fuzzy_fallback(result_df, sql, query, schema_str, session) — if result empty, retries with ILIKE
+  _summarize_result(result_df, sql, query) -> str               — builds natural language answer
+  _build_memory_block(query, session) -> str                    — prepends recent turns + summary
+  _build_metadata_section(query, session, intent) -> str        — retrieves relevant ChromaDB metadata chunks
+  _is_summary_query(query) -> bool
+
+FLOW: classify intent → build memory+metadata → generate SQL → execute (retry up to 5x) →
+      fuzzy fallback → summarize → optionally call charts.generate_chart_and_insights

@@ -1,0 +1,286 @@
+{
+  "app.py": {
+    "classes": {},
+    "functions": [
+      "health",
+      "chat_endpoint",
+      "download_file",
+      "upload_file",
+      "smart_parser_questions",
+      "smart_parser_submit_answers"
+    ],
+    "local_deps": [
+      "pdf_handler",
+      "search",
+      "file_loader",
+      "metadata",
+      "config",
+      "session",
+      "dto_models"
+    ],
+    "external_imports": [
+      "shutil",
+      "chromadb",
+      "fastapi",
+      "fastapi.middleware.cors",
+      "fastapi.responses"
+    ]
+  },
+  "charts.py": {
+    "classes": {},
+    "functions": [
+      "generate_chart_and_insights"
+    ],
+    "local_deps": [
+      "config",
+      "llm"
+    ],
+    "external_imports": [
+      "json",
+      "pandas"
+    ]
+  },
+  "cleanse.py": {
+    "classes": {},
+    "functions": [
+      "_identify_dirty_rows",
+      "cleanse_data"
+    ],
+    "local_deps": [
+      "config",
+      "llm",
+      "dto_models",
+      "session"
+    ],
+    "external_imports": [
+      "os",
+      "json",
+      "pandas"
+    ]
+  },
+  "config.py": {
+    "classes": {},
+    "functions": [],
+    "local_deps": [],
+    "external_imports": [
+      "pathlib"
+    ]
+  },
+  "dictionary.py": {
+    "classes": {},
+    "functions": [],
+    "local_deps": [],
+    "external_imports": []
+  },
+  "dto_models.py": {
+    "classes": {
+      "SearchResult": [],
+      "SmartParserQuestion": [],
+      "SmartParserAnswer": [],
+      "SmartParserAnswersRequest": [],
+      "ChatRequest": [],
+      "ChatResponse": [],
+      "UploadResponse": []
+    },
+    "functions": [],
+    "local_deps": [],
+    "external_imports": [
+      "dataclasses",
+      "pydantic"
+    ]
+  },
+  "file_loader.py": {
+    "classes": {},
+    "functions": [
+      "_to_snake_case",
+      "_normalize_headers_inplace",
+      "load_dataframe",
+      "load_into_duckdb",
+      "load_pdf_pages"
+    ],
+    "local_deps": [
+      "session"
+    ],
+    "external_imports": [
+      "re",
+      "duckdb",
+      "pandas",
+      "pdfplumber"
+    ]
+  },
+  "gen_graph.py": {
+    "classes": {},
+    "functions": [
+      "parse_file",
+      "local_dep",
+      "build_graph"
+    ],
+    "local_deps": [],
+    "external_imports": [
+      "ast",
+      "json",
+      "pathlib"
+    ]
+  },
+  "intent.py": {
+    "classes": {
+      "QueryIntent": []
+    },
+    "functions": [
+      "classify_intent",
+      "classify_intent_with_llm"
+    ],
+    "local_deps": [
+      "dictionary",
+      "config",
+      "llm"
+    ],
+    "external_imports": [
+      "json",
+      "enum"
+    ]
+  },
+  "llm.py": {
+    "classes": {},
+    "functions": [
+      "get_response_from_llm",
+      "strip_fences"
+    ],
+    "local_deps": [],
+    "external_imports": [
+      "os",
+      "dotenv",
+      "groq",
+      "openai.types.chat"
+    ]
+  },
+  "main.py": {
+    "classes": {},
+    "functions": [
+      "free_port"
+    ],
+    "local_deps": [],
+    "external_imports": [
+      "psutil",
+      "uvicorn"
+    ]
+  },
+  "memory.py": {
+    "classes": {},
+    "functions": [
+      "_embed_for_memory",
+      "store_conversation",
+      "format_recent_turns",
+      "retrieve_similar_conversations"
+    ],
+    "local_deps": [
+      "llm",
+      "session"
+    ],
+    "external_imports": [
+      "time",
+      "ollama"
+    ]
+  },
+  "metadata.py": {
+    "classes": {},
+    "functions": [
+      "_col_to_doc",
+      "_table_to_doc",
+      "_format_full_metadata",
+      "store_metadata_in_vectordb",
+      "retrieve_relevant_metadata",
+      "generate_rich_metadata",
+      "generate_schema_summary",
+      "generate_smart_parser_questions"
+    ],
+    "local_deps": [
+      "config",
+      "llm",
+      "session"
+    ],
+    "external_imports": [
+      "json",
+      "pandas"
+    ]
+  },
+  "pdf_handler.py": {
+    "classes": {},
+    "functions": [
+      "load_pdf_index",
+      "_store_pdf_conversation",
+      "_format_recent_pdf_turns",
+      "pdf_search"
+    ],
+    "local_deps": [
+      "config",
+      "llm",
+      "dto_models",
+      "session"
+    ],
+    "external_imports": [
+      "rank_bm25"
+    ]
+  },
+  "search.py": {
+    "classes": {},
+    "functions": [
+      "search"
+    ],
+    "local_deps": [
+      "pdf_handler",
+      "cleanse",
+      "session",
+      "intent",
+      "sql_agent",
+      "dto_models"
+    ],
+    "external_imports": []
+  },
+  "session.py": {
+    "classes": {
+      "Session": [],
+      "SessionManager": [
+        "__init__",
+        "create",
+        "get",
+        "reset"
+      ]
+    },
+    "functions": [],
+    "local_deps": [],
+    "external_imports": [
+      "duckdb",
+      "pandas",
+      "chromadb",
+      "collections",
+      "dataclasses",
+      "typing",
+      "rank_bm25"
+    ]
+  },
+  "sql_agent.py": {
+    "classes": {},
+    "functions": [
+      "_is_summary_query",
+      "_build_memory_block",
+      "_build_metadata_section",
+      "_generate_sql",
+      "_execute_with_retry",
+      "_apply_fuzzy_fallback",
+      "_summarize_result",
+      "text_to_sql_search"
+    ],
+    "local_deps": [
+      "dictionary",
+      "memory",
+      "metadata",
+      "charts",
+      "intent",
+      "session",
+      "dto_models",
+      "llm"
+    ],
+    "external_imports": []
+  }
+}

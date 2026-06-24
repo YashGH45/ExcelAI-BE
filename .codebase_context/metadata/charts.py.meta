@@ -1,0 +1,8 @@
+FILE: charts.py
+PURPOSE: Generates a Vega-Lite v5 chart spec and/or insight bullet list from a DataFrame via LLM.
+IMPORTS: json, pandas, llm, config
+
+FUNCTIONS:
+  generate_chart_and_insights(df, query, want_chart=True, want_insights=True) -> tuple[dict|None, list[str]]
+    Selects prompt from config (CHART_AND_INSIGHTS_PROMPT / CHART_ONLY_PROMPT / INSIGHTS_ONLY_PROMPT).
+    Returns (vega_spec_dict, insights_list); vega_spec is None when data is a single scalar or < 2 rows.

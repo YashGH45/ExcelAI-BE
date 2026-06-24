@@ -1,0 +1,19 @@
+FILE: memory.py
+PURPOSE: Stores conversation turns in Session; compresses old turns into a rolling summary; retrieves similar past Q&A via Ollama embeddings.
+IMPORTS: time, ollama, session, llm
+
+FUNCTIONS:
+  store_conversation(query, sql, answer, session)
+    Appends turn to recent_turns deque; when deque full, compresses oldest turn into conversation_summary via LLM.
+    Also embeds query and stores in ChromaDB memory collection via Ollama nomic-embed-text.
+
+  format_recent_turns(session) -> str
+    Formats last N turns as "Q/SQL/A" block for prompt injection.
+
+  retrieve_similar_conversations(query, session, top_k=3) -> str
+    Embeds query, queries ChromaDB memory collection, returns similar past answers.
+
+  _embed_for_memory(text) -> list[float] | None
+    Calls ollama.embeddings with nomic-embed-text; returns None gracefully if Ollama unavailable.
+
+ENV: OLLAMA_EMBED_MODEL=nomic-embed-text (configured in .env)

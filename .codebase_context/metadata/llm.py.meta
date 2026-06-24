@@ -1,0 +1,20 @@
+FILE: llm.py
+PURPOSE: LLM abstraction; routes calls to Ollama (default) or Groq based on LLM_BACKEND env var.
+IMPORTS: os, dotenv, groq, openai.types.chat
+
+FUNCTIONS:
+  get_response_from_llm(user_prompt, system_prompt="You are a helpful assistant.") -> str
+    Sends system+user message to active backend; logs token usage.
+
+  strip_fences(text) -> str
+    Removes markdown ``` code fences LLMs sometimes add.
+
+ENV VARS USED:
+  LLM_BACKEND          "ollama" (default) | "groq"
+  OLLAMA_BASE_URL      e.g. http://localhost:11434/v1
+  OLLAMA_MODEL         e.g. qwen2.5-coder:7b-instruct-q4_K_M
+  OLLAMA_MAX_TOKENS    default 512
+  OLLAMA_TEMPERATURE   default 0.1
+  OLLAMA_KEEP_ALIVE    e.g. 30m
+  GROQ_API_KEY         only when LLM_BACKEND=groq
+  GROQ_CHAT_MODEL      e.g. llama-3.3-70b-versatile

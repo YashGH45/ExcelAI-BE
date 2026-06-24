@@ -1,0 +1,9 @@
+FILE: dictionary.py
+PURPOSE: Immutable keyword tuples used by intent.py for fast classification without LLM call.
+IMPORTS: (none)
+
+CONSTANTS:
+  _CHART_KEYWORDS    "plot", "chart", "graph", "visualize", etc.
+  _SUMMARY_KEYWORDS  "summary", "summarize", "overview", "describe the data", etc.
+  _CLEANSE_KEYWORDS  "cleanse", "clean the data", "fix dirty", "impute missing", etc.
+  _WRITE_PHRASES     "update the", "modify the", "delete the row", "add a row", etc.

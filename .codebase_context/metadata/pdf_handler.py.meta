@@ -1,0 +1,15 @@
+FILE: pdf_handler.py
+PURPOSE: BM25-indexed PDF search with sliding conversation memory for multi-turn PDF Q&A.
+IMPORTS: rank_bm25.BM25Okapi, session, llm, dto_models
+
+FUNCTIONS:
+  load_pdf_index(pages, session)
+    Tokenizes page text; builds BM25Okapi index stored in session.pdf_bm25.
+
+  pdf_search(query, session, top_k=3) -> SearchResult
+    Scores pages with BM25, retrieves top-k, injects recent PDF turns + summary into LLM prompt.
+
+  _store_pdf_conversation(query, page_refs, answer, session)
+    Same rolling-summary compression as memory.py but for PDF turns.
+
+  _format_recent_pdf_turns(session) -> str

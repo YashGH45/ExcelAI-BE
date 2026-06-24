@@ -1,0 +1,15 @@
+FILE: intent.py
+PURPOSE: Classifies user query into one of 6 intents using keyword matching first, LLM fallback.
+IMPORTS: json, enum, dictionary, llm
+
+CLASSES:
+  QueryIntent(Enum)
+    ANSWER_ONLY | ANSWER_WITH_CHART | ANSWER_WITH_INSIGHTS |
+    ANSWER_WITH_CHART_AND_INSIGHTS | WRITE | CLEANSE
+
+FUNCTIONS:
+  classify_intent(query, schema_summary="") -> QueryIntent
+    Fast path: checks _CLEANSE_KEYWORDS → _WRITE_PHRASES → _CHART_KEYWORDS → else calls LLM.
+
+  classify_intent_with_llm(query, schema_summary="") -> QueryIntent
+    Sends query + schema to LLM, parses JSON response into QueryIntent.

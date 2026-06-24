@@ -1,0 +1,21 @@
+FILE: metadata.py
+PURPOSE: Generates structured column/table metadata via LLM; stores/retrieves from ChromaDB for RAG.
+IMPORTS: json, pandas, session, llm
+
+FUNCTIONS:
+  generate_rich_metadata(df, answers=None) -> dict
+    LLM-generates column descriptions, types, example values, aliases; optionally enriched by Smart Parser answers.
+
+  generate_schema_summary(metadata) -> dict
+    Produces a short dataset description used in SQL prompts.
+
+  generate_smart_parser_questions(df) -> list[dict]
+    Returns questions to ask the user about dataset context (Smart Parser mode).
+
+  store_metadata_in_vectordb(metadata, session)
+    Chunks metadata docs; upserts into session.metadata_collection (ChromaDB).
+
+  retrieve_relevant_metadata(query, session, top_k=6) -> str
+    Queries ChromaDB with query text; returns formatted metadata string for LLM prompt.
+
+  _col_to_doc / _table_to_doc / _format_full_metadata — formatting helpers

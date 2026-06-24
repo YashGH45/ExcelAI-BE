@@ -1,0 +1,232 @@
+{
+  "nodes": [
+    {
+      "id": "app.py",
+      "type": "module",
+      "purpose": "FastAPI application entrypoint; defines all HTTP endpoints",
+      "defines": [
+        "GET /api/health",
+        "POST /api/chat",
+        "GET /api/download/{filename}",
+        "POST /api/upload",
+        "GET /api/smart-parser/questions",
+        "POST /api/smart-parser/answers"
+      ],
+      "imports": ["fastapi", "chromadb", "session", "config", "dto_models", "search", "pdf_handler", "metadata", "file_loader"]
+    },
+    {
+      "id": "main.py",
+      "type": "module",
+      "purpose": "Process entrypoint; kills existing port 8000 process and starts uvicorn",
+      "defines": ["free_port(port)"],
+      "imports": ["psutil", "uvicorn"]
+    },
+    {
+      "id": "session.py",
+      "type": "module",
+      "purpose": "Defines Session dataclass and SessionManager for per-user state",
+      "defines": [
+        "Session",
+        "SessionManager",
+        "SessionManager.__init__(chroma_client)",
+        "SessionManager.create(session_id)",
+        "SessionManager.get(session_id)",
+        "SessionManager.reset(session_id)"
+      ],
+      "imports": ["duckdb", "pandas", "chromadb", "rank_bm25:BM25Okapi"]
+    },
+    {
+      "id": "config.py",
+      "type": "module",
+      "purpose": "All LLM prompt templates and global path constants",
+      "defines": ["UPLOAD_DIR"],
+      "imports": ["pathlib"]
+    },
+    {
+      "id": "dto_models.py",
+      "type": "module",
+      "purpose": "Pydantic/dataclass models for API request and response shapes",
+      "defines": [
+        "SearchResult",
+        "SmartParserQuestion",
+        "SmartParserAnswer",
+        "SmartParserAnswersRequest",
+        "ChatRequest",
+        "ChatResponse",
+        "UploadResponse"
+      ],
+      "imports": ["dataclasses", "pydantic"]
+    },
+    {
+      "id": "llm.py",
+      "type": "module",
+      "purpose": "LLM abstraction layer; routes to Ollama or Groq based on LLM_BACKEND env var",
+      "defines": [
+        "get_response_from_llm(user_prompt, system_prompt)",
+        "strip_fences(text)"
+      ],
+      "imports": ["os", "dotenv", "groq", "openai.types.chat"]
+    },
+    {
+      "id": "intent.py",
+      "type": "module",
+      "purpose": "Classifies user query intent (chart, cleanse, write, answer) via keywords and LLM",
+      "defines": [
+        "QueryIntent",
+        "classify_intent(query, schema_summary)",
+        "classify_intent_with_llm(query, schema_summary)"
+      ],
+      "imports": ["json", "enum", "dictionary", "llm"]
+    },
+    {
+      "id": "search.py",
+      "type": "module",
+      "purpose": "Top-level search dispatcher; routes to pdf_search or text_to_sql_search by mode",
+      "defines": ["search(query, session, top_k)"],
+      "imports": ["session", "intent", "pdf_handler", "cleanse", "sql_agent", "dto_models"]
+    },
+    {
+      "id": "sql_agent.py",
+      "type": "module",
+      "purpose": "Converts natural language to DuckDB SQL, executes with retry, returns answer+chart",
+      "defines": [
+        "_is_summary_query(query)",
+        "_build_memory_block(query, session)",
+        "_build_metadata_section(query, session, intent)",
+        "_generate_sql(query, schema_str, metadata_section, memory_block)",
+        "_execute_with_retry(sql, query, schema_str, session)",
+        "_apply_fuzzy_fallback(result_df, sql, query, schema_str, session)",
+        "_summarize_result(result_df, sql, query)",
+        "text_to_sql_search(query, session, intent)"
+      ],
+      "imports": ["session", "intent", "llm", "metadata", "memory", "charts", "dictionary", "dto_models"]
+    },
+    {
+      "id": "metadata.py",
+      "type": "module",
+      "purpose": "Generates rich column/table metadata, stores/retrieves from ChromaDB vector store",
+      "defines": [
+        "_col_to_doc(col)",
+        "_table_to_doc(table)",
+        "_format_full_metadata(session)",
+        "store_metadata_in_vectordb(metadata, session)",
+        "retrieve_relevant_metadata(query, session, top_k)",
+        "generate_rich_metadata(df, answers)",
+        "generate_schema_summary(metadata)",
+        "generate_smart_parser_questions(df)"
+      ],
+      "imports": ["json", "pandas", "session", "llm"]
+    },
+    {
+      "id": "memory.py",
+      "type": "module",
+      "purpose": "Stores and retrieves conversation turns; compresses old turns into rolling summary via Ollama embeddings",
+      "defines": [
+        "_embed_for_memory(text)",
+        "store_conversation(query, sql, answer, session)",
+        "format_recent_turns(session)",
+        "retrieve_similar_conversations(query, session, top_k)"
+      ],
+      "imports": ["time", "ollama", "session", "llm"]
+    },
+    {
+      "id": "charts.py",
+      "type": "module",
+      "purpose": "Generates Vega-Lite chart specs and textual insights from a DataFrame via LLM",
+      "defines": ["generate_chart_and_insights(df, query, want_chart, want_insights)"],
+      "imports": ["json", "pandas", "llm", "config"]
+    },
+    {
+      "id": "cleanse.py",
+      "type": "module",
+      "purpose": "Detects and repairs dirty rows (nulls, type mismatches) in a DataFrame using LLM suggestions",
+      "defines": [
+        "_identify_dirty_rows(df)",
+        "cleanse_data(session)"
+      ],
+      "imports": ["os", "json", "pandas", "session", "llm", "dto_models"]
+    },
+    {
+      "id": "file_loader.py",
+      "type": "module",
+      "purpose": "Loads Excel/CSV into pandas DataFrame and DuckDB; normalises column headers to snake_case",
+      "defines": [
+        "_to_snake_case(name)",
+        "_normalize_headers_inplace(filepath, df)",
+        "load_dataframe(filepath)",
+        "load_into_duckdb(df, session)",
+        "load_pdf_pages(filepath)"
+      ],
+      "imports": ["re", "duckdb", "pandas", "pdfplumber", "session"]
+    },
+    {
+      "id": "pdf_handler.py",
+      "type": "module",
+      "purpose": "Builds BM25 index over PDF pages and performs keyword-based PDF Q&A with conversation memory",
+      "defines": [
+        "load_pdf_index(pages, session)",
+        "_store_pdf_conversation(query, page_refs, answer, session)",
+        "_format_recent_pdf_turns(session)",
+        "pdf_search(query, session, top_k)"
+      ],
+      "imports": ["rank_bm25:BM25Okapi", "session", "llm", "dto_models"]
+    },
+    {
+      "id": "dictionary.py",
+      "type": "module",
+      "purpose": "Keyword lists for intent classification (chart, summary, cleanse, write phrases)",
+      "defines": ["_CHART_KEYWORDS", "_SUMMARY_KEYWORDS", "_CLEANSE_KEYWORDS", "_WRITE_PHRASES"],
+      "imports": []
+    },
+    {
+      "id": "gen_graph.py",
+      "type": "module",
+      "purpose": "CLI script to auto-generate graph.json from AST parsing of all project .py files",
+      "defines": [
+        "parse_file(path)",
+        "local_dep(imports, file_names)",
+        "build_graph()"
+      ],
+      "imports": ["ast", "json", "pathlib"]
+    }
+  ],
+  "edges": [
+    { "from": "app.py", "to": "session.py", "relationship": "imports" },
+    { "from": "app.py", "to": "config.py", "relationship": "imports" },
+    { "from": "app.py", "to": "dto_models.py", "relationship": "imports" },
+    { "from": "app.py", "to": "search.py", "relationship": "imports" },
+    { "from": "app.py", "to": "pdf_handler.py", "relationship": "imports" },
+    { "from": "app.py", "to": "metadata.py", "relationship": "imports" },
+    { "from": "app.py", "to": "file_loader.py", "relationship": "imports" },
+    { "from": "search.py", "to": "session.py", "relationship": "imports" },
+    { "from": "search.py", "to": "intent.py", "relationship": "imports" },
+    { "from": "search.py", "to": "pdf_handler.py", "relationship": "imports" },
+    { "from": "search.py", "to": "cleanse.py", "relationship": "imports" },
+    { "from": "search.py", "to": "sql_agent.py", "relationship": "imports" },
+    { "from": "search.py", "to": "dto_models.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "session.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "intent.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "metadata.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "memory.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "charts.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "dictionary.py", "relationship": "imports" },
+    { "from": "sql_agent.py", "to": "dto_models.py", "relationship": "imports" },
+    { "from": "intent.py", "to": "dictionary.py", "relationship": "imports" },
+    { "from": "intent.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "charts.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "charts.py", "to": "config.py", "relationship": "imports" },
+    { "from": "cleanse.py", "to": "session.py", "relationship": "imports" },
+    { "from": "cleanse.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "cleanse.py", "to": "dto_models.py", "relationship": "imports" },
+    { "from": "metadata.py", "to": "session.py", "relationship": "imports" },
+    { "from": "metadata.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "memory.py", "to": "session.py", "relationship": "imports" },
+    { "from": "memory.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "pdf_handler.py", "to": "session.py", "relationship": "imports" },
+    { "from": "pdf_handler.py", "to": "llm.py", "relationship": "imports" },
+    { "from": "pdf_handler.py", "to": "dto_models.py", "relationship": "imports" },
+    { "from": "file_loader.py", "to": "session.py", "relationship": "imports" },
+    { "from": "main.py", "to": "app.py", "relationship": "imports (via uvicorn string ref)" }
+  ]
+}

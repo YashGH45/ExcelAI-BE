@@ -1,0 +1,17 @@
+FILE: file_loader.py
+PURPOSE: Loads Excel/CSV/PDF files; normalises column headers to snake_case; registers DataFrame in DuckDB.
+IMPORTS: re, duckdb, pandas, pdfplumber, session
+
+FUNCTIONS:
+  load_dataframe(filepath) -> pd.DataFrame
+    Reads .xlsx/.xls with openpyxl or .csv; calls _normalize_headers_inplace.
+
+  load_into_duckdb(df, session)
+    Registers df as "data" table in session.duck_conn (in-memory DuckDB).
+
+  load_pdf_pages(filepath) -> list[dict]
+    Extracts text from each PDF page via pdfplumber; returns [{page_num, text}, ...].
+
+  _to_snake_case(name) -> str
+  _normalize_headers_inplace(filepath, df) -> pd.DataFrame
+    Renames columns and overwrites the source file.
