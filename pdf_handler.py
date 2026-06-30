@@ -1,14 +1,85 @@
+import os
+import re
 from rank_bm25 import BM25Okapi
 from session import Session
 from llm import get_response_from_llm
-from dto_models import SearchResult
+from dto_models import SearchResult, PDFSource
+
+_STOPWORDS = {
+    "the", "and", "for", "are", "was", "were", "with", "that", "this",
+    "from", "have", "has", "been", "what", "when", "where", "which",
+    "who", "how", "can", "will", "would", "could", "should", "may", "might",
+}
+
+
+def _compute_highlight_spans(text: str, query: str) -> list[dict]:
+    spans = []
+    text_lower = text.lower()
+
+    query_words = {
+        w for w in re.findall(r'\b\w+\b', query.lower())
+        if len(w) > 3 and w not in _STOPWORDS
+    }
+    for word in query_words:
+        for m in re.finditer(re.escape(word), text_lower):
+            spans.append({"start": m.start(), "end": m.end()})
+
+    for m in re.finditer(r'\b\d+(?:\.\d+)?%?\b', text):
+        spans.append({"start": m.start(), "end": m.end()})
+
+    spans.sort(key=lambda s: s["start"])
+    merged = []
+    for span in spans:
+        if merged and span["start"] <= merged[-1]["end"]:
+            merged[-1]["end"] = max(merged[-1]["end"], span["end"])
+        else:
+            merged.append(span)
+    return merged
+
+
+def _extract_section_heading(text: str) -> str | None:
+    for line in text.splitlines():
+        line = line.strip()
+        if line and len(line) < 100:
+            return line
+    return None
+
+
+def _chunk_pages(pages: list[dict], max_chars: int = 600) -> list[dict]:
+    """Split pages into paragraph-sized chunks. Each chunk keeps its page_num."""
+    chunks = []
+    for page in pages:
+        page_num = page["page_num"]
+        paragraphs = [p.strip() for p in re.split(r'\n{2,}', page["text"]) if p.strip()]
+        for para in paragraphs:
+            if len(para) <= max_chars:
+                chunks.append({"page_num": page_num, "text": para})
+            else:
+                # Split long paragraphs by sentence boundary
+                sentences = re.split(r'(?<=[.!?])\s+', para)
+                current = ""
+                for sent in sentences:
+                    if len(current) + len(sent) + 1 <= max_chars:
+                        current = (current + " " + sent).strip() if current else sent
+                    else:
+                        if current:
+                            chunks.append({"page_num": page_num, "text": current})
+                        # Hard-split sentences that exceed max_chars on their own
+                        while len(sent) > max_chars:
+                            chunks.append({"page_num": page_num, "text": sent[:max_chars]})
+                            sent = sent[max_chars:]
+                        current = sent
+                if current:
+                    chunks.append({"page_num": page_num, "text": current})
+    return chunks
 
 
 def load_pdf_index(pages: list[dict], session: Session) -> None:
-    session.pdf_pages = pages
-    tokenized = [page["text"].lower().split() for page in pages]
+    chunks = _chunk_pages(pages)
+    session.pdf_pages = chunks
+    tokenized = [chunk["text"].lower().split() for chunk in chunks]
     session.pdf_bm25 = BM25Okapi(tokenized)
-    print(f"[pdf-index] built BM25 index over {len(pages)} pages")
+    print(f"[pdf-index] built BM25 index over {len(chunks)} chunks from {len(pages)} pages")
 
 
 def _store_pdf_conversation(query: str, page_refs: str, answer: str, session: Session) -> None:
@@ -35,7 +106,7 @@ def _format_recent_pdf_turns(session: Session) -> str:
     return "\n\n".join(lines)
 
 
-def pdf_search(query: str, session: Session, top_k: int = 3) -> SearchResult:
+def pdf_search(query: str, session: Session, top_k: int = 5) -> SearchResult:
     if session.pdf_bm25 is None or not session.pdf_pages:
         return SearchResult(reply="No PDF loaded. Please upload a PDF file first.")
 
@@ -43,16 +114,34 @@ def pdf_search(query: str, session: Session, top_k: int = 3) -> SearchResult:
     scores = session.pdf_bm25.get_scores(tokens)
     top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
 
+    print(f"[pdf-search] query tokens: {tokens}")
+    print(f"[pdf-search] pages indexed: {len(session.pdf_pages)}")
+    print(f"[pdf-search] top scores: {[(i, round(float(scores[i]), 4)) for i in top_indices]}")
+
+    if not top_indices:
+        return SearchResult(reply="I couldn't find any relevant content in the PDF for your question.")
+
+    top_scores = [float(scores[i]) for i in top_indices]
+    score_min = min(top_scores)
+    score_max = max(top_scores)
+    score_range = score_max - score_min
+
     context_parts = []
     matched_page_nums = []
-    for idx in top_indices:
-        if scores[idx] > 0:
-            page = session.pdf_pages[idx]
-            context_parts.append(f"[Page {page['page_num']}]\n{page['text']}")
-            matched_page_nums.append(str(page["page_num"]))
-
-    if not context_parts:
-        return SearchResult(reply="I couldn't find any relevant content in the PDF for your question.")
+    pdf_sources = []
+    for idx, raw_score in zip(top_indices, top_scores):
+        page = session.pdf_pages[idx]
+        context_parts.append(f"[Page {page['page_num']}]\n{page['text']}")
+        matched_page_nums.append(str(page["page_num"]))
+        normalized_score = round(((raw_score - score_min) / score_range), 2) if score_range > 0 else 1.0
+        pdf_sources.append(PDFSource(
+            file_name=os.path.basename(session.current_filepath) if session.current_filepath else "",
+            page_number=page["page_num"],
+            section_heading=_extract_section_heading(page["text"]),
+            text=page["text"],
+            score=normalized_score,
+            highlight_spans=_compute_highlight_spans(page["text"], query),
+        ))
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -80,4 +169,4 @@ def pdf_search(query: str, session: Session, top_k: int = 3) -> SearchResult:
     _store_pdf_conversation(query, page_refs, answer, session)
     print(f"[pdf-index] answered from pages: {page_refs}")
 
-    return SearchResult(reply=answer)
+    return SearchResult(reply=answer, sources=pdf_sources)

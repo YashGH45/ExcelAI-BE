@@ -30,14 +30,17 @@ def _normalize_headers_inplace(filepath: str, df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_dataframe(filepath: str) -> pd.DataFrame:
+def load_dataframe(filepath: str) -> tuple[pd.DataFrame, str | None]:
+    sheet_name = None
     if filepath.endswith(".csv"):
         df = pd.read_csv(filepath)
     else:
-        df = pd.read_excel(filepath)
+        xf = pd.ExcelFile(filepath)
+        sheet_name = xf.sheet_names[0] if xf.sheet_names else None
+        df = xf.parse(sheet_name or 0)
     df = df.dropna(how="all")
     df = _normalize_headers_inplace(filepath, df)
-    return df
+    return df, sheet_name
 
 
 def load_into_duckdb(df: pd.DataFrame, session: Session) -> None:

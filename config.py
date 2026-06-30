@@ -241,8 +241,7 @@ Retrieved PDF pages:
 {history}\
 Question: {query}
 
-Answer based solely on the provided page content. Cite page numbers where relevant \
-(e.g. "According to page 3..."). If the answer cannot be found in the retrieved pages, \
+Answer based solely on the provided page content. If the answer cannot be found in the retrieved pages, \
 say so clearly instead of guessing.
 Be concise and accurate.\
 """

@@ -5,7 +5,9 @@ from metadata import retrieve_relevant_metadata
 from memory import store_conversation, format_recent_turns, retrieve_similar_conversations
 from charts import generate_chart_and_insights
 from dictionary import _SUMMARY_KEYWORDS
-from dto_models import SearchResult
+import json
+import os
+from dto_models import SearchResult, SpreadsheetSource
 
 MAX_RESULT_ROWS = 20
 MAX_SQL_RETRIES = 5
@@ -187,6 +189,16 @@ def text_to_sql_search(query: str, session: Session, intent: QueryIntent) -> Sea
         result_df = result_df.head(MAX_RESULT_ROWS)
         print(f"[token guard] result truncated to {MAX_RESULT_ROWS} of {total_rows} rows")
 
+    source = SpreadsheetSource(
+        file_name=os.path.basename(session.current_filepath) if session.current_filepath else "",
+        sheet_name=session.sheet_name,
+        sql=sql,
+        retrieved_row_count=len(result_df),
+        total_row_count=total_rows,
+        columns_used=list(result_df.columns),
+        rows=json.loads(result_df.to_json(orient="records")),
+    )
+
     summary = _summarize_result(result_df, sql, query)
 
     wants_chart = intent in (QueryIntent.ANSWER_WITH_CHART, QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS)
@@ -209,4 +221,4 @@ def text_to_sql_search(query: str, session: Session, intent: QueryIntent) -> Sea
 
     store_conversation(query, sql, summary, session)
 
-    return SearchResult(reply=summary, vega_spec=vega_spec, insights=insights)
+    return SearchResult(reply=summary, vega_spec=vega_spec, insights=insights, sources=[source])

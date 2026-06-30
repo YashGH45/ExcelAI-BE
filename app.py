@@ -1,3 +1,4 @@
+import dataclasses
 import shutil
 
 import chromadb
@@ -53,6 +54,7 @@ async def chat_endpoint(body: ChatRequest):
         vega_spec=result.vega_spec,
         insights=result.insights,
         download_url=result.download_url,
+        sources=[dataclasses.asdict(s) for s in result.sources],
     )
 
 
@@ -107,8 +109,9 @@ async def upload_file(
 
 
         # ── Excel / CSV file ──────────────────────────────────────────────────
-        df = load_dataframe(str(file_path))
+        df, sheet_name = load_dataframe(str(file_path))
         load_into_duckdb(df, session)
+        session.sheet_name = sheet_name
         session.smart_parser_df = df
 
         if not smart_parser_mode:

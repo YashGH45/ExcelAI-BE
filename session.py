@@ -18,6 +18,7 @@ class Session:
     smart_parser_df: pd.DataFrame | None = None
     dataset_summary: str | None = None
     current_mode: str = "excel"
+    sheet_name: str | None = None
     # ── Excel conversation memory ─────────────────────────────────────────────
     recent_turns: deque = field(default_factory=lambda: deque(maxlen=5))
     conversation_summary: str = ""
