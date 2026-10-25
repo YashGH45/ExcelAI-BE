@@ -106,12 +106,7 @@ def retrieve_relevant_metadata(query: str, session: Session, top_k: int = 6) -> 
 # ── LLM-based generation ──────────────────────────────────────────────────────
 
 def generate_rich_metadata(df: pd.DataFrame, answers: list[dict] | None = None) -> dict:
-    """Generate rich table + column metadata via a single LLM call.
 
-    answers: optional list of {"id": str, "answer": str} from the smart-parser
-             clarification step. When provided, the LLM incorporates them into
-             the metadata instead of having to guess.
-    """
     from config import RICH_METADATA_PROMPT
     schema_str = "\n".join(f"  {col}: {dtype}" for col, dtype in df.dtypes.items())
     sample_df = df.head(5)

@@ -55,6 +55,7 @@ async def chat_endpoint(body: ChatRequest):
         insights=result.insights,
         download_url=result.download_url,
         sources=[dataclasses.asdict(s) for s in result.sources],
+        evidence=[dataclasses.asdict(e) for e in result.evidence],
     )
 
 

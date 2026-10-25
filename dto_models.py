@@ -27,12 +27,25 @@ class PDFSource:
 
 
 @dataclass
+class PDFEvidence:
+    chunk_id: str = ""
+    page: int = 0
+    heading: str | None = None
+    paragraph_ids: list = field(default_factory=list)
+    bounding_boxes: list = field(default_factory=list)
+    character_offsets: dict = field(default_factory=dict)
+    similarity_score: float = 0.0
+    evidence_text: str | None = None
+
+
+@dataclass
 class SearchResult:
     reply: str
     vega_spec: dict | None = field(default=None)
     insights: list = field(default_factory=list)
     download_url: str | None = field(default=None)
     sources: list = field(default_factory=list)
+    evidence: list = field(default_factory=list)
 
 
 class SmartParserQuestion(BaseModel):
@@ -63,6 +76,7 @@ class ChatResponse(BaseModel):
     insights: list[str] = []
     download_url: str | None = None
     sources: list = []
+    evidence: list = []
 
 
 class UploadResponse(BaseModel):

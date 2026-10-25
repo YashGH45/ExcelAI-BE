@@ -5,6 +5,7 @@ from metadata import retrieve_relevant_metadata
 from memory import store_conversation, format_recent_turns, retrieve_similar_conversations
 from charts import generate_chart_and_insights
 from dictionary import _SUMMARY_KEYWORDS
+from query_planner import detect_sql_intent, build_query_plan
 import json
 import os
 from dto_models import SearchResult, SpreadsheetSource
@@ -67,11 +68,24 @@ def _build_metadata_section(query: str, session: Session, intent: QueryIntent) -
     )
 
 
-def _generate_sql(query: str, schema_str: str, metadata_section: str, memory_block: str) -> str:
+def _generate_sql(
+    query: str,
+    schema_str: str,
+    metadata_section: str,
+    memory_block: str,
+    query_plan: dict | None = None,
+) -> str:
+    plan_block = ""
+    if query_plan:
+        plan_block = (
+            f"Execution plan (follow this plan to generate the SQL):\n"
+            f"{json.dumps(query_plan, indent=2)}\n\n"
+        )
     prompt = (
         f"You have a DuckDB table called 'data' with this schema:\n{schema_str}\n\n"
         f"{metadata_section}"
         f"{memory_block}"
+        f"{plan_block}"
         f"Write a DuckDB SQL query to answer: {query}\n\n"
         "Rules:\n"
         "1. Use double quotes around all column names.\n"
@@ -171,7 +185,24 @@ def text_to_sql_search(query: str, session: Session, intent: QueryIntent) -> Sea
 
     memory_block = _build_memory_block(query, session)
     metadata_section = _build_metadata_section(query, session, intent)
-    sql = _generate_sql(query, schema_str, metadata_section, memory_block)
+
+    # Stage A — SQL Intent Detection
+    print("[sql-agent] running intent detection")
+    sql_intent = detect_sql_intent(query, schema_str, metadata_section)
+
+    # Ambiguous query: return clarification to the user instead of generating SQL
+    if sql_intent.get("ambiguous"):
+        clarification = sql_intent.get("clarification", "Could you clarify your question?")
+        print(f"[sql-agent] ambiguous query — returning clarification")
+        return SearchResult(reply=clarification)
+
+    # Stage B — Query Planning (skipped when intent detection degraded to {})
+    query_plan: dict = {}
+    if sql_intent:
+        print("[sql-agent] running query planning")
+        query_plan = build_query_plan(sql_intent, query, schema_str)
+
+    sql = _generate_sql(query, schema_str, metadata_section, memory_block, query_plan=query_plan)
 
     result_df, sql, last_error = _execute_with_retry(sql, query, schema_str, session)
     if result_df is None:

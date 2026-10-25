@@ -53,6 +53,17 @@ def load_pdf_pages(filepath: str) -> list[dict]:
     with pdfplumber.open(filepath) as pdf:
         for i, page in enumerate(pdf.pages):
             text = (page.extract_text() or "").strip()
-            if text:
-                pages.append({"page_num": i + 1, "text": text})
+            if not text:
+                continue
+            # Extract word-level bounding boxes for evidence support.
+            # Falls back to [] for scanned/image PDFs where extract_words returns nothing.
+            try:
+                raw_words = page.extract_words() or []
+                word_bboxes = [
+                    {"text": w["text"], "x0": w["x0"], "top": w["top"], "x1": w["x1"], "bottom": w["bottom"]}
+                    for w in raw_words
+                ]
+            except Exception:
+                word_bboxes = []
+            pages.append({"page_num": i + 1, "text": text, "word_bboxes": word_bboxes})
     return pages

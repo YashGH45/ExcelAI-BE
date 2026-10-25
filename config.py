@@ -243,7 +243,8 @@ Question: {query}
 
 Answer based solely on the provided page content. If the answer cannot be found in the retrieved pages, \
 say so clearly instead of guessing.
-Be concise and accurate.\
+Be concise and accurate.
+Whenever you use information from a page, cite it inline using [Page N] notation.\
 """
 
 INTENT_PROMPT = """
@@ -297,4 +298,82 @@ Rules:
 - If a column looks like a date, label it as date
 - If a column has only a few possible values (like status, region), flag it as categorical
 - Return only valid JSON, no preamble, no markdown, no backticks
+"""
+
+
+INTENT_DETECTION_PROMPT = """\
+You are a SQL intent classifier. Given a user query, a table schema, and optional column metadata, \
+identify the structured SQL intent needed to answer the query.
+
+Table schema:
+{schema_str}
+
+{metadata_section}\
+User query: {query}
+
+Determine the SQL operations and structure required. Return exactly one of:
+
+A) An intent object:
+{{
+  "operations": ["<one or more of: SELECT, SUM, COUNT, AVG, MAX, MIN, FILTER, GROUP_BY, RANKING, COMPARISON, TREND>"],
+  "target_columns": ["<column names referenced or implied by the query, or empty list>"],
+  "filters": ["<filter conditions in plain English, e.g. 'region = West', or empty list>"],
+  "date_constraints": ["<date range conditions in plain English, or empty list>"],
+  "sort": "<ASC | DESC | null>",
+  "group_by": ["<columns to group by, or empty list>"],
+  "output_type": "<one of: table | scalar | ranked_list | trend_series>",
+  "limit": <integer or null>
+}}
+
+B) An ambiguity marker — ONLY when two or more genuinely different SQL queries are equally \
+valid interpretations and a reasonable assumption cannot be made:
+{{"ambiguous": true, "clarification": "<a single specific clarifying question for the user>"}}
+
+Rules:
+- Return ONLY the raw JSON object. No markdown fences, no explanation.
+- "operations" must always be a non-empty list.
+- Do NOT return ambiguous for vague but interpretable queries — make a reasonable assumption instead.
+- Only return ambiguous when the schema and query together make it impossible to decide between \
+two materially different aggregations, groupings, or target columns.\
+"""
+
+
+QUERY_PLANNING_PROMPT = """\
+You are a SQL query planner. Given a user query, a table schema, and a detected SQL intent, \
+produce a precise logical execution plan that will guide SQL generation.
+Do NOT write any SQL — only describe what the SQL should do.
+
+Table schema:
+{schema_str}
+
+Detected intent:
+{intent_json}
+
+User query: {query}
+
+Return a single JSON object:
+{{
+  "select_columns": ["<exact column names from the schema to project>"],
+  "aggregations": [
+    {{"function": "<SUM|COUNT|AVG|MAX|MIN>", "column": "<column name>", "alias": "<result alias>"}}
+  ],
+  "filters": [
+    {{"column": "<column name>", "operator": "<= | >= | = | != | LIKE | IN | BETWEEN>", "value": "<value or list>"}}
+  ],
+  "group_by": ["<column names>"],
+  "order_by": [
+    {{"column": "<column name or alias>", "direction": "<ASC|DESC>"}}
+  ],
+  "limit": <integer or null>,
+  "result_shape": "<one of: table | scalar | ranked_list | trend_series>",
+  "plan_summary": "<one sentence describing what this query will do>"
+}}
+
+Rules:
+- Use only column names that exist in the provided schema.
+- If operations include SUM, COUNT, AVG, MAX, or MIN, "aggregations" must be non-empty.
+- If no aggregation is needed, set "aggregations" to [].
+- If operations include RANKING, "order_by" must be non-empty and "limit" must be set.
+- If operations include TREND, "order_by" must reference a date/time column.
+- Return ONLY the raw JSON object. No markdown fences, no explanation.\
 """

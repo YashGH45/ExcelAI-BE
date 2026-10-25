@@ -1,0 +1,186 @@
+# Backend Task: Implement Evidence-Based Citation Support for PDF RAG (Inspect Before Modifying)
+
+## Objective
+
+Enhance the existing PDF RAG backend so that every generated answer can be traced back to the exact location(s) inside the PDF.
+
+**IMPORTANT:** Before making any code changes, inspect the existing implementation. Do **not** rewrite or replace working components. Reuse existing code wherever possible and only implement missing functionality.
+
+---
+
+## Phase 1 — Inspect Existing Pipeline
+
+Analyze the current backend and determine:
+
+### PDF Parsing
+
+Check whether the parser already extracts:
+
+* Page number
+* Text
+* Word positions
+* Line positions
+* Bounding boxes
+* Character offsets
+* Paragraph structure
+
+If these already exist, reuse them.
+
+If not, extend the parser without breaking the current ingestion flow.
+
+---
+
+### Chunk Generation
+
+Determine whether chunks already contain metadata such as:
+
+* chunk_id
+* page_number
+* section heading
+* paragraph identifiers
+* character offsets
+* bounding boxes
+
+If metadata exists, preserve it.
+
+Only add missing fields.
+
+Never change the current chunking strategy unless absolutely necessary.
+
+---
+
+### Embedding Pipeline
+
+Check whether metadata is stored together with embeddings.
+
+If yes:
+
+Extend the metadata.
+
+If no:
+
+Store metadata alongside every embedded chunk.
+
+Do not modify the embedding model or retrieval logic unnecessarily.
+
+---
+
+### Retrieval
+
+Inspect the retrieval pipeline.
+
+If retrieved chunks already return metadata, reuse it.
+
+Otherwise extend the retrieval result so that each retrieved chunk includes:
+
+* chunk_id
+* page
+* text
+* paragraph ids
+* bounding boxes
+* character offsets
+* heading
+* similarity score
+
+---
+
+## Phase 2 — Preserve Source Locations
+
+During PDF ingestion, preserve positional information from the original document.
+
+Each chunk should contain metadata similar to:
+
+* chunk_id
+* text
+* page
+* paragraph ids
+* heading
+* section
+* character start
+* character end
+* bounding boxes
+* similarity score (retrieval-time)
+
+Never rely on searching the PDF again after indexing.
+
+All positional information should originate during ingestion.
+
+---
+
+## Phase 3 — LLM Grounding
+
+Do not change how answers are generated unless necessary.
+
+Instead, extend the output so the backend can associate answers with retrieved evidence.
+
+The backend should produce structured evidence metadata for every retrieved supporting chunk.
+
+If multiple chunks contributed to the answer, return all of them.
+
+---
+
+## Phase 4 — API Changes
+
+Inspect the existing API response.
+
+Do not rename existing fields.
+
+Maintain backward compatibility.
+
+Extend the response with an additional field:
+
+`evidence`
+
+Each evidence object should contain:
+
+* chunk_id
+* page
+* heading (if available)
+* paragraph ids
+* bounding boxes
+* character offsets
+* similarity score
+* evidence text (optional preview)
+
+---
+
+## Phase 5 — Fallback Handling
+
+Gracefully handle:
+
+* scanned PDFs
+* OCR-generated PDFs
+* missing bounding boxes
+* malformed coordinates
+* empty retrieval
+
+If precise coordinates are unavailable, fall back to page-level evidence instead of failing.
+
+---
+
+## Phase 6 — Code Quality
+
+Before implementing anything, determine whether an equivalent implementation already exists.
+
+If yes:
+
+Reuse it.
+
+If partially implemented:
+
+Extend it.
+
+Avoid:
+
+* rewriting existing APIs
+* changing business logic
+* modifying authentication
+* changing database schema unnecessarily
+* duplicating code
+
+Follow the existing project architecture and coding style.
+
+The final backend should continue working exactly as before while additionally returning structured evidence metadata that enables the frontend to highlight the original PDF content.
+
+
+Note:- take the dto field names for reference and go ahead with existing ones so as to not break the flow in frontend and if new are added just inform
