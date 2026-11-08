@@ -198,7 +198,7 @@ Rules:
 SMART_PARSER_QUESTIONS_PROMPT = """\
 You are a data analyst examining a new dataset. Your goal is to ask the user questions/doubts regarding the dataset you are Unsure about \
 whose answers will help you generate rich, accurate metadata.
-you may ask at Max. 7 questions
+you may ask at Most 7 questions or less than that if you are confident about the dataset. Each question should be clear, concise, and focused on a specific aspect of the dataset that is ambiguous or unclear.
 
 Dataset schema (column name → dtype):
 {schema}
@@ -223,7 +223,7 @@ Return a JSON array of question objects — maximum 7 items:
   {{
     "id": "<short_snake_case_identifier unique to this question>",
     "label": "<clear, plain-English question for the user>",
-    "placeholder": "<brief example answer or hint, e.g. 'One row = one hotel booking'>",
+    "placeholder": "<brief example answer or hint, e.g. 'One row = one hotel booking'> OR <List/array of possible values for categorical questions with none as an option>",
     "required": true
   }}
 ]
@@ -244,7 +244,8 @@ Question: {query}
 Answer based solely on the provided page content. If the answer cannot be found in the retrieved pages, \
 say so clearly instead of guessing.
 Be concise and accurate.
-Whenever you use information from a page, cite it inline using [Page N] notation.\
+Whenever you use information from a page, cite it inline using [Page N] notation.
+cover in double asterisks (**__**) for text to be bold/strong, in tilda (~__~) for italicized text Only if necessary\
 """
 
 INTENT_PROMPT = """

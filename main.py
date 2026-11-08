@@ -1,7 +1,6 @@
 import psutil
 import uvicorn
 
-
 def free_port(port: int) -> None:
     for proc in psutil.process_iter(["pid", "name"]):
         try:

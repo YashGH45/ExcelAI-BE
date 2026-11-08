@@ -21,3 +21,4 @@ vector_db/
 Thumbs.db
 /get_models.ipynb
 /rag_test_queries.md
+database/chat_history.db

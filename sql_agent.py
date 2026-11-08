@@ -9,9 +9,11 @@ from query_planner import detect_sql_intent, build_query_plan
 import json
 import os
 from dto_models import SearchResult, SpreadsheetSource
+from openpyxl import load_workbook
 
 MAX_RESULT_ROWS = 20
 MAX_SQL_RETRIES = 5
+
 
 _ANALYTICAL_INTENTS = {
     QueryIntent.ANSWER_WITH_CHART,
@@ -253,3 +255,6 @@ def text_to_sql_search(query: str, session: Session, intent: QueryIntent) -> Sea
     store_conversation(query, sql, summary, session)
 
     return SearchResult(reply=summary, vega_spec=vega_spec, insights=insights, sources=[source])
+
+
+

@@ -51,7 +51,7 @@ class SearchResult:
 class SmartParserQuestion(BaseModel):
     id: str
     label: str
-    placeholder: str
+    placeholder: str | list[str] 
     required: bool
 
 
@@ -67,7 +67,7 @@ class SmartParserAnswersRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str | None = None
+    session_id: str
 
 
 class ChatResponse(BaseModel):
@@ -85,3 +85,4 @@ class UploadResponse(BaseModel):
     col_count: int
     columns: list[str]
     file_type: str = "excel"   # "excel" | "pdf"
+    session_id: str

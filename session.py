@@ -76,3 +76,18 @@ class SessionManager:
                     except Exception:
                         pass
         return self.create(session_id)
+    
+
+    def delete(self, session_id: str) -> None:
+        """Remove a session's in-memory state and its ChromaDB collections."""
+        old = self._store.pop(session_id, None)
+        if old and old.duck_conn is not None:
+            try:
+                old.duck_conn.close()
+            except Exception:
+                pass
+        for name in (f"rich_metadata_{session_id}", f"conv_memory_{session_id}"):
+            try:
+                self._chroma.delete_collection(name)
+            except Exception:
+                pass
