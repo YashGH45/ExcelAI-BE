@@ -1,6 +1,7 @@
 import os
 import re
 from rank_bm25 import BM25Okapi
+from config import PDF_SYSTEM_PROMPT
 from session import Session
 from llm import get_response_from_llm
 from dto_models import SearchResult, PDFSource, PDFEvidence
@@ -327,7 +328,10 @@ def pdf_search(query: str, session: Session, top_k: int = 5) -> SearchResult:
         history=history_block,
         query=query,
     )
-    answer = get_response_from_llm(answer_prompt)
+    answer = get_response_from_llm(
+        user_prompt=answer_prompt,
+        system_prompt=PDF_SYSTEM_PROMPT
+    )
 
     used_pages = _extract_used_page_numbers(answer)
     answer_keywords = _extract_answer_keywords(answer)
