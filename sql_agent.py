@@ -8,6 +8,7 @@ from dictionary import _SUMMARY_KEYWORDS
 from query_planner import detect_sql_intent, build_query_plan
 import json
 import os
+from collections.abc import Callable
 from dto_models import SearchResult, SpreadsheetSource
 from openpyxl import load_workbook
 
@@ -150,7 +151,7 @@ def _apply_fuzzy_fallback(result_df, sql: str, query: str, schema_str: str, sess
     return result_df, sql
 
 
-def _summarize_result(result_df, sql: str, query: str) -> str:
+def _summarize_result(result_df, sql: str, query: str, on_token: Callable[[str], None] | None = None) -> str:
     result_csv = result_df.to_csv(index=False)
     prompt = (
         f"The following SQL was executed:\n{sql}\n\n"
@@ -162,10 +163,15 @@ def _summarize_result(result_df, sql: str, query: str) -> str:
         "- Never summarize or truncate — return all rows from the result.\n"
         "- If the user asks to list all, list all — no exceptions."
     )
-    return get_response_from_llm(prompt)
+    return get_response_from_llm(prompt, on_token=on_token)
 
 
-def text_to_sql_search(query: str, session: Session, intent: QueryIntent) -> SearchResult:
+def text_to_sql_search(
+    query: str,
+    session: Session,
+    intent: QueryIntent,
+    on_token: Callable[[str], None] | None = None,
+) -> SearchResult:
     if session.duck_conn is None:
         return SearchResult(reply="No data loaded. Please upload a file first.")
 
@@ -232,7 +238,7 @@ def text_to_sql_search(query: str, session: Session, intent: QueryIntent) -> Sea
         rows=json.loads(result_df.to_json(orient="records")),
     )
 
-    summary = _summarize_result(result_df, sql, query)
+    summary = _summarize_result(result_df, sql, query, on_token=on_token)
 
     wants_chart = intent in (QueryIntent.ANSWER_WITH_CHART, QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS)
     wants_insights = intent in (QueryIntent.ANSWER_WITH_INSIGHTS, QueryIntent.ANSWER_WITH_CHART_AND_INSIGHTS)

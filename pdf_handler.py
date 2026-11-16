@@ -1,5 +1,6 @@
 import os
 import re
+from collections.abc import Callable
 from rank_bm25 import BM25Okapi
 from config import PDF_SYSTEM_PROMPT
 from session import Session
@@ -274,7 +275,12 @@ def _format_recent_pdf_turns(session: Session) -> str:
     return "\n\n".join(lines)
 
 
-def pdf_search(query: str, session: Session, top_k: int = 5) -> SearchResult:
+def pdf_search(
+    query: str,
+    session: Session,
+    top_k: int = 5,
+    on_token: Callable[[str], None] | None = None,
+) -> SearchResult:
     if session.pdf_bm25 is None or not session.pdf_pages:
         return SearchResult(reply="No PDF loaded. Please upload a PDF file first.")
 
@@ -330,7 +336,8 @@ def pdf_search(query: str, session: Session, top_k: int = 5) -> SearchResult:
     )
     answer = get_response_from_llm(
         user_prompt=answer_prompt,
-        system_prompt=PDF_SYSTEM_PROMPT
+        system_prompt=PDF_SYSTEM_PROMPT,
+        on_token=on_token,
     )
 
     used_pages = _extract_used_page_numbers(answer)

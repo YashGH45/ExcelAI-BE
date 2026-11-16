@@ -68,6 +68,7 @@ class SmartParserAnswersRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: str
+    stream: bool = False
 
 
 class ChatResponse(BaseModel):

@@ -4,7 +4,6 @@ import pandas as pd
 import pdfplumber
 from session import Session
 import numpy as np
-from paddleocr import PPStructure
 import pdfplumber
 
 
@@ -52,8 +51,22 @@ def load_into_duckdb(df: pd.DataFrame, session: Session) -> None:
 
 # Initialize PPStructure once outside the function so models load only once.
 # Set show_log=False to keep your terminal output clean.
-layout_engine = PPStructure(table=True, ocr=True, show_log=False)
+_layout_engine = None
 
+
+def _get_layout_engine():
+    """Load PaddleOCR's PPStructure on first use (scanned PDFs only)."""
+    global _layout_engine
+    if _layout_engine is None:
+        try:
+            from paddleocr import PPStructure
+        except ImportError as e:
+            raise RuntimeError(
+                "Scanned/image-only PDFs need PaddleOCR 2.x (PPStructure), "
+                "which is not available in this environment."
+            ) from e
+        _layout_engine = PPStructure(table=True, ocr=True, show_log=False)
+    return _layout_engine
 
 def _sort_multicolumn_blocks(blocks: list[dict], page_width: float) -> list[dict]:
   """Sorts detected layout blocks in natural multi-column reading order."""
@@ -113,7 +126,7 @@ def load_pdf_pages(filepath: str, ocr_dpi: int = 300) -> list[dict]:
         img_array = np.array(pil_image)
 
         # Convert BGR/RGB if needed and run PPStructure
-        result = layout_engine(img_array)
+        result = _get_layout_engine()(img_array)
         scale = 72.0 / ocr_dpi
 
         # Sort blocks to handle multi-column layouts properly

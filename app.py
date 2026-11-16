@@ -1,5 +1,8 @@
 import dataclasses
+import json
+import queue
 import shutil
+import threading
 import uuid
 import os
 
@@ -7,7 +10,7 @@ import chromadb
 
 from fastapi import FastAPI, Form, Path, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from session import SessionManager
 from config import UPLOAD_DIR
@@ -58,6 +61,56 @@ async def health():
     return {"status": "ok"}
 
 
+def _to_chat_response(result: SearchResult) -> ChatResponse:
+    return ChatResponse(
+        reply=result.reply,
+        vega_spec=result.vega_spec,
+        insights=result.insights,
+        download_url=result.download_url,
+        sources=[dataclasses.asdict(s) for s in result.sources],
+        evidence=[dataclasses.asdict(e) for e in result.evidence],
+    )
+
+
+def _sse(event: str, data) -> str:
+    # json.dumps never emits a raw newline, so one `data:` line is always enough
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+_STREAM_DONE = object()
+
+
+def _stream_chat(message: str, session, sid: str):
+    """Run the (blocking) search pipeline in a worker thread and relay its
+    output as Server-Sent Events:
+
+      event: token   data: "<text fragment>"      (0..n times, final answer only)
+      event: result  data: <ChatResponse JSON>    (once; carries chart/insights/sources)
+      event: error   data: {"message": "..."}     (instead of result on failure)
+    """
+    q: queue.Queue = queue.Queue()
+
+    def worker():
+        try:
+            result = search(message, session, on_token=lambda t: q.put(("token", t)))
+            save_message(sid, "assistant", result.reply)
+            q.put(("result", _to_chat_response(result).model_dump()))
+        except Exception as e:
+            print(f"[chat-stream] failed: {e}")
+            q.put(("error", {"message": str(e)}))
+        finally:
+            q.put(_STREAM_DONE)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    while True:
+        item = q.get()
+        if item is _STREAM_DONE:
+            break
+        event, data = item
+        yield _sse(event, data)
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(body: ChatRequest):
     sid = body.session_id
@@ -68,21 +121,26 @@ async def chat_endpoint(body: ChatRequest):
             detail="Session not found. Please upload a file first.",
         )
 
-    ensure_chat(sid)      
-    save_message(sid, "user", body.message)          
+    ensure_chat(sid)
+    save_message(sid, "user", body.message)
+
+    if body.stream:
+        # Returning a Response object bypasses response_model validation.
+        return StreamingResponse(
+            _stream_chat(body.message, session, sid),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",   # stop nginx-style proxies buffering the stream
+            },
+        )
 
     result: SearchResult = search(body.message, session)
 
-    save_message(sid, "assistant", result.reply)     
+    save_message(sid, "assistant", result.reply)
 
-    return ChatResponse(
-        reply=result.reply,
-        vega_spec=result.vega_spec,
-        insights=result.insights,
-        download_url=result.download_url,
-        sources=[dataclasses.asdict(s) for s in result.sources],
-        evidence=[dataclasses.asdict(e) for e in result.evidence],
-    )
+    return _to_chat_response(result)
 
 
 @app.get("/api/chats")
