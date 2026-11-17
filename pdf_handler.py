@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from collections.abc import Callable
@@ -327,60 +328,114 @@ def pdf_search(
         if recent_str else ""
     )
     history_block = summary_block + recent_block
+    
+    from config import PDF_ANSWER_GENERATION_PROMPT, PDF_RESPONSE_FORMATTING_PROMPT
+    from llm import get_response_from_llm, strip_fences
 
-    from config import PDF_ANSWER_PROMPT
-    answer_prompt = PDF_ANSWER_PROMPT.format(
+    # Stage 1: Generate answer and presentation decision
+    answer_prompt = PDF_ANSWER_GENERATION_PROMPT.format(
         context=context,
         history=history_block,
         query=query,
     )
-    answer = get_response_from_llm(
+
+    raw_response = get_response_from_llm(
         user_prompt=answer_prompt,
         system_prompt=PDF_SYSTEM_PROMPT,
-        on_token=on_token,
+        # Do NOT stream Stage 1 JSON to the frontend.
     )
 
-    used_pages = _extract_used_page_numbers(answer)
-    answer_keywords = _extract_answer_keywords(answer)
+    # Parse structured response
+    try:
+        result = json.loads(strip_fences(raw_response))
 
-    file_name = os.path.basename(session.current_filepath) if session.current_filepath else ""
-    pdf_sources: list[PDFSource] = []
-    pdf_evidence: list[PDFEvidence] = []
+        answer = result["answer"]
+        presentation_needed = result["presentation_needed"]
+        presentation_type = result["presentation_type"]
 
-    for chunk in retrieved_chunks:
-        if used_pages and chunk["page_num"] not in used_pages:
-            continue
-        sentence_spans = _extract_used_sentences(chunk["text"], answer_keywords)
-        if not sentence_spans:
-            continue
-        snippet, highlight_spans = _build_cited_snippet(chunk["text"], sentence_spans)
+        if not isinstance(answer, str) or not isinstance(presentation_needed, bool):
+            raise ValueError("Invalid PDF answer response")
 
-        pdf_sources.append(PDFSource(
-            file_name=file_name,
-            page_number=chunk["page_num"],
-            section_heading=chunk["heading"],
-            text=snippet,
-            score=chunk["score"],
-            highlight_spans=highlight_spans,
-        ))
-        pdf_evidence.append(PDFEvidence(
-            chunk_id=chunk["chunk_id"],
-            page=chunk["page_num"],
-            heading=chunk["heading"],
-            paragraph_ids=[chunk["paragraph_id"]],
-            bounding_boxes=[chunk["bbox"]] if chunk["bbox"] else [],
-            character_offsets={"start": chunk["char_start"], "end": chunk["char_end"]},
-            similarity_score=chunk["score"],
-            evidence_text=snippet or None,
-        ))
+        if presentation_needed and presentation_type == "none":
+            raise ValueError("Missing presentation type")
 
-    # Sort by BM25 score, cap at 5; keep sources and evidence in sync
-    combined = sorted(zip(pdf_sources, pdf_evidence), key=lambda p: p[0].score, reverse=True)[:5]
-    pdf_sources = [s for s, _ in combined]
-    pdf_evidence = [e for _, e in combined]
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        print(f"[pdf-answer] Structured output parsing failed: {e}")
 
-    page_refs = ", ".join(f"p.{p}" for p in matched_page_nums)
-    _store_pdf_conversation(query, page_refs, answer, session)
-    print(f"[pdf-index] answered from pages: {page_refs} | cited: {used_pages or 'none'} | sources built: {len(pdf_sources)}")
+        # Fallback: use the raw response as the answer
+        answer = raw_response
+        presentation_needed = False
+        presentation_type = "none"
 
-    return SearchResult(reply=answer, sources=pdf_sources, evidence=pdf_evidence)
+
+    # Stage 2: Format only when required
+    if presentation_needed:
+        presentation_prompt = PDF_RESPONSE_FORMATTING_PROMPT.format(
+            query=query,
+            answer=answer,
+            presentation_type=presentation_type,
+        )
+
+        final_answer = get_response_from_llm(
+            user_prompt=presentation_prompt,
+            system_prompt=PDF_SYSTEM_PROMPT,
+            on_token=on_token,
+        )
+
+    else:
+        final_answer = answer
+
+        # Send the answer to the frontend when Stage 2 is skipped
+        if on_token:
+            on_token(final_answer)
+
+
+
+        used_pages = _extract_used_page_numbers(answer)
+        answer_keywords = _extract_answer_keywords(answer)
+
+        file_name = os.path.basename(session.current_filepath) if session.current_filepath else ""
+        pdf_sources: list[PDFSource] = []
+        pdf_evidence: list[PDFEvidence] = []
+
+        for chunk in retrieved_chunks:
+            if used_pages and chunk["page_num"] not in used_pages:
+                continue
+            sentence_spans = _extract_used_sentences(chunk["text"], answer_keywords)
+            if not sentence_spans:
+                continue
+            snippet, highlight_spans = _build_cited_snippet(chunk["text"], sentence_spans)
+
+            pdf_sources.append(PDFSource(
+                file_name=file_name,
+                page_number=chunk["page_num"],
+                section_heading=chunk["heading"],
+                text=snippet,
+                score=chunk["score"],
+                highlight_spans=highlight_spans,
+            ))
+            pdf_evidence.append(PDFEvidence(
+                chunk_id=chunk["chunk_id"],
+                page=chunk["page_num"],
+                heading=chunk["heading"],
+                paragraph_ids=[chunk["paragraph_id"]],
+                bounding_boxes=[chunk["bbox"]] if chunk["bbox"] else [],
+                character_offsets={"start": chunk["char_start"], "end": chunk["char_end"]},
+                similarity_score=chunk["score"],
+                evidence_text=snippet or None,
+            ))
+
+        # Sort by BM25 score, cap at 5; keep sources and evidence in sync
+        combined = sorted(zip(pdf_sources, pdf_evidence), key=lambda p: p[0].score, reverse=True)[:5]
+        pdf_sources = [s for s, _ in combined]
+        pdf_evidence = [e for _, e in combined]
+
+        page_refs = ", ".join(f"p.{p}" for p in matched_page_nums)
+        _store_pdf_conversation(query, page_refs, final_answer, session)
+        print(f"[pdf-index] answered from pages: {page_refs} | cited: {used_pages or 'none'} | sources built: {len(pdf_sources)}")
+
+        return SearchResult(
+            reply=final_answer,
+            sources=pdf_sources,
+            evidence=pdf_evidence
+        )

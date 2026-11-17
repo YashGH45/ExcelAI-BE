@@ -68,9 +68,10 @@ def get_response_from_llm(
         model=groq_chat_model,
         messages=_build_messages(user_prompt, system_prompt),
     )
-    usage = response.usage
-    print(f"[tokens] input={usage.prompt_tokens}  output={usage.completion_tokens}  total={usage.total_tokens}")
-    return response.choices[0].message.content
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        print(f"[tokens] input={usage.prompt_tokens}  output={usage.completion_tokens}  total={usage.total_tokens}")
+    return response.choices[0].message.content or ""
 
 
 def strip_fences(text: str) -> str:

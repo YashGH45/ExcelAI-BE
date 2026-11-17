@@ -5,6 +5,7 @@ import shutil
 import threading
 import uuid
 import os
+import logging
 
 import chromadb
 
@@ -96,8 +97,10 @@ def _stream_chat(message: str, session, sid: str):
             save_message(sid, "assistant", result.reply)
             q.put(("result", _to_chat_response(result).model_dump()))
         except Exception as e:
-            print(f"[chat-stream] failed: {e}")
-            q.put(("error", {"message": str(e)}))
+            logging.exception("[chat-stream] failed")
+            # Keep implementation details in the server log. Streaming clients
+            # may render the error payload directly in the conversation.
+            q.put(("error", {"message": "The request could not be completed. Please try again."}))
         finally:
             q.put(_STREAM_DONE)
 

@@ -214,12 +214,8 @@ def text_to_sql_search(
 
     result_df, sql, last_error = _execute_with_retry(sql, query, schema_str, session)
     if result_df is None:
-        return SearchResult(
-            reply=(
-                f"I was unable to answer your question after {MAX_SQL_RETRIES} attempts. "
-                f"Last error: {last_error}"
-            )
-        )
+        print(f"[sql-agent] giving up after {MAX_SQL_RETRIES} attempts: {last_error}")
+        return SearchResult(reply="I couldn't answer that question because the generated query failed. Please try rephrasing it.")
 
     result_df, sql = _apply_fuzzy_fallback(result_df, sql, query, schema_str, session)
 
